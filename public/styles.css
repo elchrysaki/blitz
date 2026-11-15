@@ -473,13 +473,13 @@ button.tile:active { transform: scale(.97); }
 
 /* ---------- nav links: plain text, no boxes ----------
    Dashboard, Edit, Cancel, New quiz (home), Close lobby: just text in the bar.
-   Hover (and the page you're on) only changes the colour. Orange main buttons keep their shape. */
+   Hover (and the page you're on) only turns the text white. Orange main buttons keep their shape. */
 .nav .navlink, .nav .btn:not(.primary), .nav .ghost {
   background: none; border: 0; box-shadow: none; text-decoration: none;
-  height: var(--ctl-sm); padding: 0 12px; color: rgba(246, 241, 233, .88); font-size: 15px; font-weight: 600;
+  height: var(--ctl-sm); padding: 0 12px; color: rgba(246, 241, 233, .7); font-size: 15px; font-weight: 600;
   transition: color .2s ease, var(--press);
 }
-.nav .navlink.on { color: var(--vermilion-hi); background: none; box-shadow: none; }
+.nav .navlink.on { color: #fff; background: none; box-shadow: none; }
 @media (hover: hover) and (pointer: fine) {
-  .nav .navlink:hover, .nav .btn:not(.primary):hover, .nav .ghost:hover { color: var(--vermilion-hi); background: none; box-shadow: none; border: 0; }
+  .nav .navlink:hover, .nav .btn:not(.primary):hover, .nav .ghost:hover { color: #fff; background: none; box-shadow: none; border: 0; }
 }
