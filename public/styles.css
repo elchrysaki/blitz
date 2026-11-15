@@ -15,7 +15,7 @@
   --bg: var(--ink-950);
   --surface: var(--teal-900);
   --ink: var(--wall);
-  --mute: rgba(246, 241, 233, .62);
+  --mute: rgba(246, 241, 233, .78);
   --line: rgba(246, 241, 233, .12);
   --glass: rgba(246, 241, 233, .05);
   --accent: var(--vermilion);
@@ -75,10 +75,17 @@ input::selection, textarea::selection { background: var(--accent); color: var(--
 
 /* ---------- ambient background ---------- */
 /* Static glow: painted once, never animated or blurred (blur + animation kept the GPU busy on every frame). */
-/* Denim: a photo of real indigo denim, stretched to cover the screen (so no tile seams show)
-   and evenly darkened so text stays readable. It's a still image, painted once. */
+/* Denim: a photo of real indigo denim, colour-graded to the palette's teal and stretched to
+   cover the screen (so no tile seams show). It's a still image, painted once. */
 .aurora { position: fixed; inset: 0; z-index: -1; pointer-events: none; background-color: var(--bg);
-  background-image: linear-gradient(rgba(2, 16, 30, .28), rgba(2, 16, 30, .28)), url("/textures/denim.webp");
+  /* Colour grade, top to bottom: a deep-teal veil that calms the weave so text reads,
+     the palette's teal applied as "color" (hue + saturation only, the weave keeps its light and shade),
+     then the photo itself. */
+  background-image:
+    linear-gradient(rgba(3, 42, 60, .52), rgba(3, 42, 60, .52)),
+    linear-gradient(var(--teal-700), var(--teal-700)),
+    url("/textures/denim.webp");
+  background-blend-mode: normal, color, normal;
   background-size: cover; background-position: center;
 }
 .aurora i { display: none; }
@@ -98,7 +105,7 @@ input::selection, textarea::selection { background: var(--accent); color: var(--
 .logo { font: 800 24px/1 var(--display); letter-spacing: -.03em; }
 .logo i { color: var(--accent); font-style: normal; }
 
-.eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--vermilion-hi); }  /* lighter orange: small text needs the extra contrast */
 .eyebrow strong { color: var(--ink); letter-spacing: .04em; text-transform: none; font-size: 15px; }
 .lede { color: var(--mute); font-size: clamp(17px, 1.6vw, 21px); max-width: 34em; text-wrap: pretty; }
 .lede strong { color: var(--ink); }
