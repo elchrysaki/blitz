@@ -30,6 +30,22 @@ Deploys happen through **Cloudflare Workers Builds**, which is connected to this
 npm install && npx wrangler deploy
 ```
 
+## Look
+
+The colors and fonts are fixed. Use the tokens in `public/styles.css` (`:root`) and don't add new colors or fonts.
+
+| Token | Color | Use |
+| --- | --- | --- |
+| `--navy-950` | `#09121E` | page background |
+| `--navy-900` | `#0E1E38` | cards, nav |
+| `--navy-700` | `#16325F` | raised details (step numbers, covers) |
+| `--cream` | `#F6EFE3` | text |
+| `--orange` | `#FF8A1F` | the one accent: primary buttons, highlighted words, labels, timer |
+| `--pink` `--sage` `--sky` `--butter` | `#EFACD4` `#B9D7A8` `#A9C5E9` `#F3DC94` | answers A–D (sage also means correct) |
+| `--coral` | `#F2836B` | wrong |
+
+- **Bricolage Grotesque** (headlines, numbers, PIN, scores) and **DM Sans** (everything else). Both are served from `public/fonts/`.
+
 ## Speed
 
 - **No continuous effects.** The background glow is a static gradient, cards don't blur what's behind them, and the countdown ticker only runs while a timer is on screen and the tab is visible. Idle pages use almost no CPU or GPU. People with reduced motion turned on get no animations.

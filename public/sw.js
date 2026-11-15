@@ -2,13 +2,14 @@
 // - App shell (page, script, styles): served from cache at once, refreshed in the background.
 // - Quiz pictures: their URLs carry a version, so a cached copy is always right.
 // - Everything else under /api (live games, scores, saving): always straight to the network.
-const SHELL = 'blitz-shell-v1';
+const SHELL = 'blitz-shell-v2';
 const PICS = 'blitz-pics-v1';
 const SHELL_FILES = ['/', '/app.js', '/styles.css'];
+const FONTS = ['/fonts/dm-sans.woff2', '/fonts/bricolage-grotesque.woff2'];
 const MAX_PICS = 150;
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(SHELL).then((c) => c.addAll([...SHELL_FILES, ...FONTS])).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -52,5 +53,6 @@ self.addEventListener('fetch', (e) => {
   if (isPic(url)) return e.respondWith(fromPics(req));
   if (url.pathname.startsWith('/api/')) return;            // live data: never cached
   if (req.mode === 'navigate') return e.respondWith(fromShell(req, '/'));   // every app route is index.html
+  if (FONTS.includes(url.pathname)) return e.respondWith(caches.match(url.pathname).then((hit) => hit || fetch(req)));  // fonts never change
   if (url.pathname === '/app.js' || url.pathname === '/styles.css') return e.respondWith(fromShell(req, url.pathname));
 });

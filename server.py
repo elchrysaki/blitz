@@ -30,7 +30,7 @@ WEEK = 7 * 24 * 3600
 COOKIE = "blitz_uid"
 MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
-        ".ico": "image/x-icon"}
+        ".ico": "image/x-icon", ".woff2": "font/woff2"}
 IMG_RE = re.compile(r"^data:image/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$")
 KEEP_RE = re.compile(r"^/api/quizzes/([\w-]+)/image/(\d+)(?:\?v=\d+)?$")  # "keep the picture you already have"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,40}$")
