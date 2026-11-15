@@ -184,11 +184,18 @@ input::placeholder { color: rgba(246, 241, 233, .28); }
 .create, .preview { max-width: 820px; }
 .create-head { padding: 40px 0 36px; display: grid; gap: 14px; }
 .title-input { width: 100%; background: none; border: 0; outline: 0; font-family: var(--display); font-size: clamp(40px, 7vw, 76px); font-weight: 800; letter-spacing: -.025em; line-height: 1.05; padding: 0; }
-.qcard, .pcard { padding: 26px; margin-bottom: 20px; display: grid; gap: 18px; }
-.qcard header, .pcard header { display: flex; align-items: center; gap: 10px; }
+.qcard, .pcard { padding: 26px; margin-bottom: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }  /* never wider than the card */
+.qcard header, .pcard header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .num { font-size: 13px; font-weight: 600; letter-spacing: .14em; color: var(--accent); }
 .select { font-size: 14px; color: var(--ink); display: inline-flex; align-items: center; gap: 8px; }
-.select select { background: var(--solid); border: 1.5px solid var(--edge-soft); color: var(--ink); border-radius: 999px; height: var(--ctl-sm); padding: 0 14px; font-size: 15px; font-weight: 600; }
+/* Dropdowns: our own chevron and room for it, so the value never runs under the arrow */
+select { -webkit-appearance: none; appearance: none; cursor: pointer; }
+.select select { background: var(--solid) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%23F6F1E9' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 14px center / 11px 8px;
+  border: 1.5px solid var(--edge-soft); color: var(--ink); border-radius: 999px; height: var(--ctl-sm); min-width: 84px;
+  padding: 0 36px 0 16px; font: 600 15px var(--sans); font-variant-numeric: tabular-nums; transition: border-color .2s ease; }
+.select select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+select option { background: var(--teal-900); color: var(--ink); }
+@media (hover: hover) and (pointer: fine) { .select select:hover { border-color: var(--ice); } }
 .q-input { width: 100%; background: none; border: 0; outline: 0; font-family: var(--display); font-size: clamp(24px, 3.4vw, 34px); font-weight: 700; letter-spacing: -.02em; }
 .pcard h2 { font-family: var(--display); font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -.02em; line-height: 1.15; overflow-wrap: anywhere; }
 .drop { position: relative; display: grid; place-items: center; min-height: 148px; border: 1.5px dashed var(--edge); border-radius: 20px; background: rgba(6, 66, 92, .55); cursor: pointer; overflow: hidden; transition: border-color .2s, background .2s; }
@@ -207,7 +214,8 @@ input::placeholder { color: rgba(246, 241, 233, .28); }
 .intro-banner figcaption { position: absolute; left: 14px; bottom: 14px; padding: 6px 14px; border-radius: 999px; background: rgba(3, 42, 60, .82); font: 700 15px var(--display); }
 .intro-img { width: auto; max-width: min(420px, 100%); max-height: 32vh; object-fit: contain; border-radius: 26px; border: 1px solid var(--line); animation: bounce .42s var(--ease) both; }
 .meta.warn { color: var(--vermilion-hi); font-weight: 600; }
-.answers-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.answers-edit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ans { min-width: 0; }
 .ans { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 18px; background: var(--solid); border: 1.5px solid var(--edge-soft); border-left: 4px solid var(--tone); transition: background .2s, border-color .2s; }
 .ans:focus-within { background: var(--solid-hi); border-color: var(--edge); border-left-color: var(--tone); }
 .ans input::placeholder { color: rgba(246, 241, 233, .6); }
@@ -224,7 +232,9 @@ input::placeholder { color: rgba(246, 241, 233, .28); }
 .t0 { --tone: var(--a); } .t1 { --tone: var(--b); } .t2 { --tone: var(--c); } .t3 { --tone: var(--d); }
 
 /* ---------- answer tiles ---------- */
-.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.tiles .tile { min-width: 0; }  /* long answers and count badges wrap instead of pushing the tile wider */
+@media (max-width: 480px) { .tiles { grid-template-columns: minmax(0, 1fr); } }
 .tile {
   position: relative; display: flex; align-items: center; gap: 14px; text-align: left;
   min-height: 84px; padding: 16px 20px; border-radius: 22px;
@@ -244,16 +254,31 @@ button.tile:active { transform: scale(.97); }
 .pcard .tile { min-height: 60px; font-size: 17px; animation: none; }
 
 /* ---------- lobby ---------- */
-.lobby-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 40px; align-items: start; padding-top: 36px; }
-.joinbox { padding: 36px; display: grid; gap: 22px; }
-.pin { font-family: var(--display); font-size: clamp(64px, 10.5vw, 148px); font-weight: 800; letter-spacing: -.02em; line-height: .9; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lobby-grid { display: grid; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr); gap: 32px; align-items: start; padding-top: 36px; }
+.joinbox { padding: 32px; display: grid; gap: 22px; container-type: inline-size; position: sticky; top: 96px; }
+/* The PIN scales with its box (container units), so it always fits on one line */
+.pin { font-family: var(--display); font-size: min(132px, 23cqi); font-weight: 800; letter-spacing: -.02em; line-height: .9; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .linkrow { display: flex; gap: 8px; }
-.linkrow input { flex: 1; min-width: 0; height: 54px; border-radius: 999px; background: var(--bg); border: 1.5px solid var(--edge-soft); padding: 0 20px; font-size: 15px; color: rgba(246, 241, 233, .88); outline: 0; }
+.linkrow input { flex: 1; min-width: 0; height: 54px; border-radius: 999px; background: var(--bg); border: 1.5px solid var(--edge-soft); padding: 0 20px; font-size: 15px; color: rgba(246, 241, 233, .88); outline: 0; text-overflow: ellipsis; }
 .roster-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
 .roster h2 { font: 800 56px/1 var(--display); letter-spacing: -.03em; }
 .roster h2 small { font: 500 20px var(--sans); color: var(--mute); letter-spacing: 0; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip { padding: 10px 18px; border-radius: 999px; background: var(--solid); border: 1.5px solid var(--edge-soft); font-weight: 600; }
+/* Players: a grid of big-head characters that hop in as they join */
+.crowd { display: grid; grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 14px; }
+.buddy { display: grid; justify-items: center; gap: 4px; padding: 14px 8px 12px; border-radius: 24px; background: var(--solid);
+  border: 1.5px solid var(--edge-soft); box-shadow: var(--lift); min-width: 0; }
+.buddy-art { width: 86px; height: 103px; transition: transform .35s var(--ease); }
+.buddy span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 16px var(--display); }
+.buddy.new { animation: hop .6s var(--ease) both; }
+@keyframes hop { from { opacity: 0; transform: translateY(18px) scale(.86); } 60% { opacity: 1; transform: translateY(-6px) scale(1.04); } }
+@media (hover: hover) and (pointer: fine) { .buddy:hover .buddy-art { transform: translateY(-6px) rotate(-5deg); } }
+.buddy:active .buddy-art { transform: scale(.94); }
+.buddy.me { padding: 18px 22px 14px; }
+.buddy.me .buddy-art { width: 120px; height: 144px; }
+.buddy.me span { font-size: 20px; }
+.crowd-empty { display: contents; }
+.crowd-empty .waiting { grid-column: 1 / -1; }
+.ghost-buddy { height: 150px; background: transparent; border: 1.5px dashed var(--edge-soft); box-shadow: none; }
 .waiting { color: var(--mute); }
 
 /* ---------- game stage ---------- */
@@ -384,9 +409,14 @@ button.tile:active { transform: scale(.97); }
   .dash-sec { margin-top: 36px; }
   .steps { grid-template-columns: 1fr; }
   .steps article, .steps article + article { padding: 22px 0; border-left: 0; border-bottom: 1px solid var(--line); }
-  .answers-edit { grid-template-columns: 1fr; }
+  .answers-edit { grid-template-columns: minmax(0, 1fr); }
   .qcard, .pcard { padding: 20px; border-radius: 24px; }
   .lobby-grid { grid-template-columns: 1fr; gap: 28px; padding-top: 12px; }
+  .joinbox { position: static; }
+  .nav:has(.pill) .logo span { display: none; }  /* in a game the bar holds your name and score: keep just the mark */
+  .nav .btn.small { padding: 0 14px; }
+  .crowd { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+  .buddy-art { width: 70px; height: 84px; }
   .joinbox { padding: 24px; }
   .linkrow { flex-direction: column; }
   .qwrap { flex-direction: column; justify-content: center; gap: 18px; }
@@ -418,7 +448,7 @@ button.tile:active { transform: scale(.97); }
 /* ---------- accessibility ---------- */
 /* Reduced motion: keep gentle fades that help explain what changed, drop movement and looping. */
 @media (prefers-reduced-motion: reduce) {
-  .page, .tile, .board li, .qtile, .avatar, .verdict, .block, .drop-in { animation-name: fade !important; animation-duration: .2s !important; animation-delay: 0s !important; }
+  .page, .tile, .board li, .qtile, .avatar, .verdict, .block, .drop-in, .buddy.new { animation-name: fade !important; animation-duration: .2s !important; animation-delay: 0s !important; }
   .livebadge::before, .livedot, .dots::after { animation: none !important; }
   #hl i, .hl-layer i { animation: none; transition: none; }
   .btn:active, button.tile:active, .ghost:active, .navlink:active, .seg button:active, .pick:active i, .add:active, .newtile:active { transform: none; }
@@ -431,4 +461,25 @@ button.tile:active { transform: scale(.97); }
 @media (prefers-contrast: more) {
   :root { --line: rgba(246, 241, 233, .35); --mute: rgba(246, 241, 233, .85); --glass: rgba(246, 241, 233, .1); }
   .nav { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+/* Small phones: the bar keeps just the mark, and long button labels drop their extra words */
+@media (max-width: 480px) {
+  .logo span { display: none; }
+  .navlink { margin-left: 2px; }
+  .hide-sm { display: none; }
+  .nav:has(.btn ~ .btn) .navlink { display: none; }  /* two actions in the bar: the logo still leads home */
+}
+
+/* ---------- nav links: plain text, no boxes ----------
+   Dashboard, Edit, Cancel, New quiz (home), Close lobby: just text in the bar.
+   Hover (and the page you're on) only changes the colour. Orange main buttons keep their shape. */
+.nav .navlink, .nav .btn:not(.primary), .nav .ghost {
+  background: none; border: 0; box-shadow: none; text-decoration: none;
+  height: var(--ctl-sm); padding: 0 12px; color: rgba(246, 241, 233, .88); font-size: 15px; font-weight: 600;
+  transition: color .2s ease, var(--press);
+}
+.nav .navlink.on { color: var(--vermilion-hi); background: none; box-shadow: none; }
+@media (hover: hover) and (pointer: fine) {
+  .nav .navlink:hover, .nav .btn:not(.primary):hover, .nav .ghost:hover { color: var(--vermilion-hi); background: none; box-shadow: none; border: 0; }
 }

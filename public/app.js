@@ -10,6 +10,131 @@
   const clamp = (v) => Math.min(1, Math.max(0, v));
   const r4 = (v) => Math.round(v * 1e4) / 1e4;
   const pct = (v) => `${(v * 100).toFixed(2)}%`;
+  // ---------- player avatars ----------
+  // An original big-head "2000s diva" for each nickname, drawn as SVG: chunky highlights, scrunchies,
+  // butterfly clips, frosted tips, hoops, shades on the head, lip gloss. The same name always gets
+  // the same character, so players recognise themselves on the big screen.
+  const AV = {
+    skin: ['#FBDCC4', '#F1BE94', '#D99B6C', '#B47648', '#8C5428', '#5E3A22'],
+    hair: ['#2A1A12', '#4B2C1C', '#7A2331', '#B8732F', '#E6B866', '#EDE3D2', '#151B24'],
+    streak: ['#F4D58D', '#EDE3D2', '#FF7A45', '#D4EEF6'],
+    top: ['#FF5A1F', '#1FA8D2', '#D4EEF6', '#EBC9A5'],
+    lips: ['#E8604A', '#C2412B', '#FF7A45', '#B8576A'],
+  };
+  const hashName = (str) => {
+    let h = 2166136261;
+    for (const ch of str.toLowerCase()) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  };
+  // Colour helpers for the 3D shading: mix a colour toward white (light) or near-black (shade).
+  const mixHex = (hex, to, t) => '#' + [1, 3, 5].map((i) => {
+    const a = parseInt(hex.slice(i, i + 2), 16), b = parseInt(to.slice(i, i + 2), 16);
+    return Math.round(a + (b - a) * t).toString(16).padStart(2, '0');
+  }).join('');
+  const light = (hex, t) => mixHex(hex, '#ffffff', t);
+  const shade = (hex, t) => mixHex(hex, '#140c08', t);
+
+  function avatar(name) {
+    const key = (name || '?').trim();
+    const pick = (arr, trait) => arr[hashName(`${trait}:${key}`) % arr.length];  // each trait from its own hash
+    const chance = (pct, trait) => hashName(`${trait}?${key}`) % 100 < pct;
+    const skin = pick(AV.skin, 's'), hair = pick(AV.hair, 'h'), streak = pick(AV.streak, 'k');
+    const top = pick(AV.top, 't'), lips = pick(AV.lips, 'l');
+    const style = pick([0, 1, 2, 3, 4, 5, 6], 'y'), outfit = pick([0, 1, 2, 3], 'o');
+    const look = pick([0, 0, 1, 2], 'e'), mouth = pick([0, 0, 1, 2], 'm');
+    const ink = '#1B1210', gold = '#E2A93B', gem = '#1FA8D2';
+    const accent = top === '#FF5A1F' ? '#1FA8D2' : '#FF5A1F';   // scrunchies, clips, bandanas: a contrasting pop
+
+    // hair behind the head
+    const back = [
+      `<path d="M13 50Q13 12 50 12Q87 12 87 50L90 106Q70 112 50 110Q30 112 10 106Z" fill="${hair}"/>`,
+      `<path d="M60 22Q96 2 90 44Q94 66 80 74Q88 52 80 36Q76 26 64 26Z" fill="${hair}"/><circle cx="70" cy="20" r="7" fill="${accent}"/>`,
+      `<circle cx="24" cy="20" r="13" fill="${hair}"/><circle cx="76" cy="20" r="13" fill="${hair}"/>`,
+      `<path d="M13 48Q13 13 50 13Q87 13 87 48L87 78Q93 86 99 82Q93 92 80 87L20 87Q7 92 1 82Q7 86 13 78Z" fill="${hair}"/>`,
+      '',
+      `<path d="M14 50Q14 16 50 16Q86 16 86 50L86 90Q50 96 14 90Z" fill="${hair}"/>`,
+      `<g fill="${hair}"><circle cx="16" cy="42" r="15"/><circle cx="84" cy="42" r="15"/><circle cx="14" cy="66" r="13"/><circle cx="86" cy="66" r="13"/><circle cx="20" cy="86" r="11"/><circle cx="80" cy="86" r="11"/><circle cx="30" cy="22" r="16"/><circle cx="70" cy="22" r="16"/><circle cx="50" cy="15" r="16"/></g>`,
+    ][style];
+
+    // outfit
+    const outfits = [
+      // tube top: bare shoulders, a band of colour
+      `<path d="M14 120Q14 94 50 94Q86 94 86 120Z" fill="${skin}"/><rect x="18" y="104" width="64" height="16" rx="3" fill="${top}"/><path d="M18 106H82" stroke="#fff" stroke-opacity=".45" stroke-width="1.6"/>`,
+      // velour hoodie with zip
+      `<path d="M14 120Q14 92 50 92Q86 92 86 120Z" fill="${top}"/><path d="M36 93Q50 106 64 93" fill="none" stroke="${ink}" stroke-opacity=".25" stroke-width="2.4"/><path d="M50 101V120" stroke="${ink}" stroke-opacity=".3" stroke-width="1.6" stroke-dasharray="2 2"/>`,
+      // halter
+      `<path d="M14 120Q14 94 50 94Q86 94 86 120Z" fill="${skin}"/><path d="M30 120L44 96M70 120L56 96" stroke="${top}" stroke-width="3"/><path d="M24 120Q50 100 76 120Z" fill="${top}"/>`,
+      // baby tee with a rhinestone star
+      `<path d="M14 120Q14 92 50 92Q86 92 86 120Z" fill="${top}"/><path d="M50 103l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8Z" fill="#fff" opacity=".9"/>`,
+    ][outfit];
+
+    // face
+    const iris = look === 1 ? 2.2 : 0; // side-eye
+    const eye = (cx, flip) => look === 2 && flip
+      ? `<path d="M${cx - 6} 57Q${cx} 51 ${cx + 6} 57" fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/><path d="M${cx + 6} 57l3-3" stroke="${ink}" stroke-width="2" stroke-linecap="round"/>`
+      : `<ellipse cx="${cx}" cy="57" rx="6" ry="5.4" fill="#fff"/><circle cx="${cx + iris}" cy="57.6" r="3.7" fill="${ink}"/><circle cx="${cx + iris + 1.3}" cy="56.2" r="1.2" fill="#fff"/>
+         <path d="M${cx - 6.5} 55.6Q${cx} 49.6 ${cx + 6.5} 55.6" fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/>
+         <path d="M${flip ? cx + 6 : cx - 6} 54.4l${flip ? 3.2 : -3.2} -2.6" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>`;
+    const brows = `<path d="M31 46Q37 41.5 44 45M56 45Q63 41.5 69 46" fill="none" stroke="${hair === '#EDE3D2' ? '#8B6A4A' : hair}" stroke-width="2.4" stroke-linecap="round"/>`;
+    const mouths = [
+      `<path d="M41 70Q45.5 66.5 50 68.6Q54.5 66.5 59 70Q55 76.6 50 76.6Q45 76.6 41 70Z" fill="${lips}"/><ellipse cx="53.5" cy="73" rx="2.6" ry="1.1" fill="#fff" opacity=".7"/>`,
+      `<path d="M42 70Q50 73 58 68Q55 75.5 49 75.6Q44 75.4 42 70Z" fill="${lips}"/><ellipse cx="52" cy="72.6" rx="2.2" ry="1" fill="#fff" opacity=".7"/>`,
+      `<path d="M40 68Q50 72 60 68Q57 79 50 79Q43 79 40 68Z" fill="${lips}"/><path d="M42 69.4Q50 72.6 58 69.4L57 71.6Q50 74 43 71.6Z" fill="#fff"/>`,
+    ][mouth];
+
+    // hair in front of the face
+    const front = [
+      `<path d="M15 54Q15 15 50 14Q85 15 85 52Q80 33 64 29Q46 40 22 46Q18 49 15 54Z" fill="${hair}"/><path d="M34 21Q28 34 24 46M62 18Q56 26 50 38" stroke="${streak}" stroke-width="4" stroke-linecap="round" fill="none"/>`,
+      `<path d="M16 50Q16 15 50 15Q84 15 84 50Q78 27 50 26Q22 27 16 50Z" fill="${hair}"/><path d="M40 17Q46 22 50 26" stroke="${streak}" stroke-width="3" stroke-linecap="round" fill="none" opacity=".8"/>`,
+      `<path d="M16 50Q16 16 50 16Q84 16 84 50Q78 28 50 27Q22 28 16 50Z" fill="${hair}"/><path d="M50 17V27" stroke="${ink}" stroke-opacity=".25" stroke-width="1.6"/>
+       <g transform="translate(26 31) rotate(-18)"><path d="M0 0Q-6 -7 -8 0Q-6 6 0 0Q6 -7 8 0Q6 6 0 0Z" fill="${accent}"/></g>
+       <g transform="translate(74 31) rotate(18)"><path d="M0 0Q-6 -7 -8 0Q-6 6 0 0Q6 -7 8 0Q6 6 0 0Z" fill="${gem}"/></g>`,
+      `<path d="M16 50Q16 15 50 15Q84 15 84 50L82 42Q50 30 18 42Z" fill="${hair}"/>`,
+      `<path d="M16 48L18 22L28 30L33 10L45 25L53 7L61 24L70 11L74 30L82 21L84 48Q70 31 50 31Q30 31 16 48Z" fill="${hair}"/>
+       <path d="M18 22L23 27L21 23ZM33 10L38 18L35 14ZM53 7L56 16L55 11ZM70 11L72 20L71 15ZM82 21L80 27L81 24Z" fill="${streak}" stroke="${streak}" stroke-width="4" stroke-linejoin="round"/>`,
+      `<path d="M14 46Q15 11 50 11Q85 11 86 46Q50 30 14 46Z" fill="${accent}"/><g fill="#fff" opacity=".75"><circle cx="34" cy="24" r="1.6"/><circle cx="50" cy="18" r="1.6"/><circle cx="66" cy="24" r="1.6"/><circle cx="42" cy="32" r="1.3"/><circle cx="58" cy="32" r="1.3"/></g>
+       <circle cx="85" cy="44" r="4.6" fill="${accent}"/><path d="M87 46L95 54L90 55Z" fill="${accent}"/>`,
+      `<path d="M20 44Q50 20 80 44" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round"/>`,
+    ][style];
+
+    // extras
+    const hoops = chance(55, 'hoop') && style !== 6 ? `<g fill="none" stroke="${gold}" stroke-width="2.4"><circle cx="13" cy="72" r="7"/><circle cx="87" cy="72" r="7"/></g>` : '';
+    const shades = chance(25, 'shades') && style !== 5 && style !== 4
+      ? `<g><rect x="28" y="22" width="19" height="11" rx="5.5" fill="${pick(['#FF7A45', '#1FA8D2', '#D4EEF6'], 'lens')}" opacity=".85" stroke="${ink}" stroke-width="1.8"/><rect x="53" y="22" width="19" height="11" rx="5.5" fill="${pick(['#FF7A45', '#1FA8D2', '#D4EEF6'], 'lens')}" opacity=".85" stroke="${ink}" stroke-width="1.8"/><path d="M47 27H53" stroke="${ink}" stroke-width="1.8"/></g>` : '';
+    const tiara = !shades && chance(14, 'tiara') && [0, 1, 3].includes(style)
+      ? `<path d="M36 20L40 11L45 17L50 6L55 17L60 11L64 20Z" fill="#F6F1E9" stroke="${ink}" stroke-width="1.4" stroke-linejoin="round"/><circle cx="50" cy="15" r="2.2" fill="${gem}"/>` : '';
+    const sticker = chance(22, 'star') ? `<path d="M73 61l1.6 3.2 3.5.5-2.5 2.5.6 3.5-3.2-1.7-3.2 1.7.6-3.5-2.5-2.5 3.5-.5Z" fill="#F4D58D"/>` : '';
+    const mole = chance(20, 'mole') ? `<circle cx="61" cy="76.5" r="1.2" fill="${ink}"/>` : '';
+
+    // Old-school 3D: every surface is lit from the top left, hair gets a gloss streak, the head casts a shadow.
+    const id = hashName(key).toString(36);
+    const defs = `<defs>
+      <radialGradient id="sk${id}" cx="36%" cy="30%" r="78%"><stop offset="0" stop-color="${light(skin, 0.38)}"/><stop offset=".5" stop-color="${skin}"/><stop offset="1" stop-color="${shade(skin, 0.28)}"/></radialGradient>
+      <linearGradient id="hr${id}" x1="0" y1="0" x2=".35" y2="1"><stop offset="0" stop-color="${light(hair, 0.3)}"/><stop offset=".45" stop-color="${hair}"/><stop offset="1" stop-color="${shade(hair, 0.35)}"/></linearGradient>
+      <linearGradient id="tp${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${light(top, 0.3)}"/><stop offset="1" stop-color="${shade(top, 0.22)}"/></linearGradient>
+      <radialGradient id="gl${id}" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    </defs>`;
+    const gloss = style === 5 ? '' : `<ellipse cx="37" cy="${style === 6 ? 20 : 22}" rx="13" ry="5" fill="url(#gl${id})" transform="rotate(-22 37 22)"/>`;
+    const faceShine = `<ellipse cx="37" cy="38" rx="9" ry="6" fill="url(#gl${id})" opacity=".55"/>`;
+    const chinShadow = `<ellipse cx="50" cy="92" rx="20" ry="5" fill="#140c08" opacity=".22"/>`;
+
+    const svg = `<svg class="buddy-art" viewBox="0 0 100 120" aria-hidden="true">${defs}
+      ${back}${outfits}
+      <rect x="43" y="82" width="14" height="14" rx="5" fill="${skin}"/>
+      <circle cx="17" cy="58" r="6.5" fill="${skin}"/><circle cx="83" cy="58" r="6.5" fill="${skin}"/>
+      ${chinShadow}
+      <circle cx="50" cy="53" r="34" fill="${skin}"/>${faceShine}
+      ${hoops}
+      <ellipse cx="29" cy="66" rx="6.4" ry="3.6" fill="#FF5A1F" opacity=".3"/><ellipse cx="71" cy="66" rx="6.4" ry="3.6" fill="#FF5A1F" opacity=".3"/>
+      ${brows}${eye(38, false)}${eye(62, true)}${mouths}${mole}${sticker}${front}${gloss}${shades}${tiara}
+    </svg>`;
+    // swap the flat fills for the shaded ones
+    return svg.replaceAll(`fill="${skin}"`, `fill="url(#sk${id})"`)
+      .replaceAll(`fill="${hair}"`, `fill="url(#hr${id})"`)
+      .replaceAll(`fill="${top}"`, `fill="url(#tp${id})"`);
+  }
+  const buddy = (name, cls = '') => `<div class="buddy ${cls}" data-name="${esc(name)}">${avatar(name)}<span>${esc(name)}</span></div>`;
+
   // The Blitz mark: vermilion tile, white bolt, denim-style stitching (same as public/brand/mark.svg).
   const MARK = '<svg class="logo-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#FF5A1F"/>'
     + '<rect x="5" y="5" width="54" height="54" rx="13.5" fill="none" stroke="#F6F1E9" stroke-opacity=".7" stroke-width="1.6" stroke-dasharray="3.2 2.6" stroke-linecap="round"/>'
@@ -323,7 +448,7 @@
     app.innerHTML = `
       <main class="page create">
         ${nav(`${editId ? `<a class="btn small" href="/host/${editId}" data-link>Cancel</a>` : ''}
-          <button class="btn primary small" id="publish">${editId ? 'Save changes' : 'Save &amp; preview'} →</button>`)}
+          <button class="btn primary small" id="publish">${editId ? 'Save<span class="hide-sm"> changes</span>' : 'Save<span class="hide-sm"> &amp; preview</span>'} →</button>`)}
         <section class="create-head">
           <p class="eyebrow">${editId ? 'Editing quiz' : 'New quiz'}</p>
           <input class="title-input" id="title" maxlength="120" placeholder="Name your quiz" value="${esc(d.title)}" aria-label="Quiz title">
@@ -355,8 +480,8 @@
             <button data-act="type" data-type="pin" class="${pin ? 'on' : ''}" aria-pressed="${pin}">Pin</button>
           </div>
           <span class="grow"></span>
-          <label class="select">Time
-            <select data-f="time">${TIMES.map((t) => `<option value="${t}" ${t === q.time ? 'selected' : ''}>${t}s</option>`).join('')}</select>
+          <label class="select"><span class="select-label">Time</span>
+            <select data-f="time" aria-label="Time to answer">${TIMES.map((t) => `<option value="${t}" ${t === q.time ? 'selected' : ''}>${t}s</option>`).join('')}</select>
           </label>
           ${d.questions.length > 1 ? '<button class="ghost" data-act="del" aria-label="Remove question">Remove</button>' : ''}
         </header>
@@ -623,7 +748,7 @@
                   <h2><span id="pcount">0</span> <small id="plabel">players</small></h2>
                   <button class="btn primary" id="next" disabled>Start game →</button>
                 </div>
-                <div class="chips" id="chips"></div>
+                <div class="crowd" id="crowd"></div>
               </div>
             </section>
           </main>`;
@@ -710,9 +835,17 @@
       $('#pcount').textContent = s.count;
       $('#plabel').textContent = s.count === 1 ? 'player' : 'players';
       $('#next').disabled = s.count === 0;
-      $('#chips').innerHTML = s.players.length
-        ? s.players.map((p) => `<span class="chip">${esc(p.name)}</span>`).join('')
-        : '<p class="waiting">Waiting for players<span class="dots"></span></p>';
+      // Add only the newcomers (they hop in); remove anyone who's gone. Everyone else stays put.
+      const crowd = $('#crowd');
+      const names = new Set(s.players.map((p) => p.name));
+      crowd.querySelectorAll('.buddy').forEach((el) => { if (!names.has(el.dataset.name)) el.remove(); });
+      const have = new Set([...crowd.querySelectorAll('.buddy')].map((el) => el.dataset.name));
+      crowd.querySelector('.crowd-empty')?.remove();
+      for (const p of s.players) if (!have.has(p.name)) crowd.insertAdjacentHTML('beforeend', buddy(p.name, 'new'));
+      if (!s.players.length) {
+        crowd.innerHTML = `<div class="crowd-empty"><div class="buddy ghost-buddy"></div><div class="buddy ghost-buddy"></div><div class="buddy ghost-buddy"></div>
+          <p class="waiting">Waiting for players<span class="dots"></span></p></div>`;
+      }
     }
 
     const session = store.get(sessionKey);
@@ -773,8 +906,8 @@
 
       if (s.phase === 'lobby') {
         return centered(`
-          ${s.cover ? `<img class="intro-img" src="${s.cover}" alt="" decoding="async">`
-            : `<div class="avatar">${esc(s.name.slice(0, 1).toUpperCase())}</div>`}
+          ${s.cover ? `<img class="intro-img" src="${s.cover}" alt="" decoding="async">` : ''}
+          ${buddy(s.name, 'me new')}
           <h1 class="display">You’re in, <em>${esc(s.name)}.</em></h1>
           <p class="lede">Eyes on the host’s screen — the game starts any second<span class="dots"></span></p>`);
       }

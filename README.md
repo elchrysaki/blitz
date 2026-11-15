@@ -7,6 +7,8 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 - **Quiz:** a title, an optional picture and 2–4 answers. Mark the right one.
 - **Pin:** a title and a picture. Drag on the picture to mark one or more target areas. Players tap to drop a map-style pin, and pins that land inside an area score.
 
+**Lobby characters:** every player gets an original big-head character in an old-school 3D, 2000s-diva style, drawn by the app as SVG and built from their nickname (the same name always gets the same character). The host's lobby shows them as a grid that players hop into as they join, and each player sees their own character while waiting.
+
 Each quiz can also have an **intro picture**, added under the title in the editor. It's shown whole (never cropped) in the host's preview, in the lobby while players join, and on each player's waiting screen. It's also the quiz's cover on the dashboard; without one, the first question's picture is used.
 
 ## No accounts
