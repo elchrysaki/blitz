@@ -2,10 +2,10 @@
 // - App shell (page, script, styles): served from cache at once, refreshed in the background.
 // - Quiz pictures: their URLs carry a version, so a cached copy is always right.
 // - Everything else under /api (live games, scores, saving): always straight to the network.
-const SHELL = 'blitz-shell-v2';
+const SHELL = 'blitz-shell-v3';
 const PICS = 'blitz-pics-v1';
 const SHELL_FILES = ['/', '/app.js', '/styles.css'];
-const FONTS = ['/fonts/dm-sans.woff2', '/fonts/bricolage-grotesque.woff2'];
+const FONTS = ['/fonts/dm-sans.woff2', '/fonts/bricolage-grotesque.woff2', '/textures/denim.webp'];  // never change
 const MAX_PICS = 150;
 
 self.addEventListener('install', (e) => {

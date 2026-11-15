@@ -60,14 +60,11 @@ em { font-style: normal; color: var(--accent); }  /* highlighted word: same face
 
 /* ---------- ambient background ---------- */
 /* Static glow: painted once, never animated or blurred (blur + animation kept the GPU busy on every frame). */
-/* Denim: a flat teal ground woven with a diagonal twill, faint cross threads and slubby
-   cotton noise. Every layer is static and painted once, so it costs nothing while idle. */
+/* Denim: a photo of real indigo denim, stretched to cover the screen (so no tile seams show)
+   and evenly darkened so text stays readable. It's a still image, painted once. */
 .aurora { position: fixed; inset: 0; z-index: -1; pointer-events: none; background-color: var(--bg);
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8 .05' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .83 0 0 0 0 .93 0 0 0 0 .96 .45 0 0 0 -.14'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23s)'/%3E%3C/svg%3E"),
-    repeating-linear-gradient(-62deg, rgba(212, 238, 246, .045) 0 1px, transparent 1px 3px),
-    repeating-linear-gradient(28deg, rgba(1, 20, 30, .3) 0 1px, transparent 1px 4px);
-  background-size: 320px 320px, auto, auto;
+  background-image: linear-gradient(rgba(2, 16, 30, .28), rgba(2, 16, 30, .28)), url("/textures/denim.webp");
+  background-size: cover; background-position: center;
 }
 .aurora i { display: none; }
 
