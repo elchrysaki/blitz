@@ -11,15 +11,14 @@
   const r4 = (v) => Math.round(v * 1e4) / 1e4;
   const pct = (v) => `${(v * 100).toFixed(2)}%`;
   // ---------- player avatars ----------
-  // An original big-head "2000s diva" for each nickname, drawn as SVG: chunky highlights, scrunchies,
-  // butterfly clips, frosted tips, hoops, shades on the head, lip gloss. The same name always gets
-  // the same character, so players recognise themselves on the big screen.
+  // Original egg-headed characters with a simple, graphic face (solid oval eyes, short brows,
+  // a soft nose, a one-line mouth), 2000s hair and accessories, and old-school 3D shading.
+  // Each player gets a random one when they join; the server picks it so every screen matches.
   const AV = {
     skin: ['#FBDCC4', '#F1BE94', '#D99B6C', '#B47648', '#8C5428', '#5E3A22'],
     hair: ['#2A1A12', '#4B2C1C', '#7A2331', '#B8732F', '#E6B866', '#EDE3D2', '#151B24'],
     streak: ['#F4D58D', '#EDE3D2', '#FF7A45', '#D4EEF6'],
     top: ['#FF5A1F', '#1FA8D2', '#D4EEF6', '#EBC9A5'],
-    lips: ['#E8604A', '#C2412B', '#FF7A45', '#B8576A'],
   };
   const hashName = (str) => {
     let h = 2166136261;
@@ -39,9 +38,8 @@
     const pick = (arr, trait) => arr[hashName(`${trait}:${key}`) % arr.length];  // each trait from its own hash
     const chance = (pct, trait) => hashName(`${trait}?${key}`) % 100 < pct;
     const skin = pick(AV.skin, 's'), hair = pick(AV.hair, 'h'), streak = pick(AV.streak, 'k');
-    const top = pick(AV.top, 't'), lips = pick(AV.lips, 'l');
+    const top = pick(AV.top, 't');
     const style = pick([0, 1, 2, 3, 4, 5, 6], 'y'), outfit = pick([0, 1, 2, 3], 'o');
-    const look = pick([0, 0, 1, 2], 'e'), mouth = pick([0, 0, 1, 2], 'm');
     const ink = '#1B1210', gold = '#E2A93B', gem = '#1FA8D2';
     const accent = top === '#FF5A1F' ? '#1FA8D2' : '#FF5A1F';   // scrunchies, clips, bandanas: a contrasting pop
 
@@ -68,19 +66,28 @@
       `<path d="M14 120Q14 92 50 92Q86 92 86 120Z" fill="${top}"/><path d="M50 103l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8Z" fill="#fff" opacity=".9"/>`,
     ][outfit];
 
-    // face
-    const iris = look === 1 ? 2.2 : 0; // side-eye
-    const eye = (cx, flip) => look === 2 && flip
-      ? `<path d="M${cx - 6} 57Q${cx} 51 ${cx + 6} 57" fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/><path d="M${cx + 6} 57l3-3" stroke="${ink}" stroke-width="2" stroke-linecap="round"/>`
-      : `<ellipse cx="${cx}" cy="57" rx="6" ry="5.4" fill="#fff"/><circle cx="${cx + iris}" cy="57.6" r="3.7" fill="${ink}"/><circle cx="${cx + iris + 1.3}" cy="56.2" r="1.2" fill="#fff"/>
-         <path d="M${cx - 6.5} 55.6Q${cx} 49.6 ${cx + 6.5} 55.6" fill="none" stroke="${ink}" stroke-width="2.2" stroke-linecap="round"/>
-         <path d="M${flip ? cx + 6 : cx - 6} 54.4l${flip ? 3.2 : -3.2} -2.6" stroke="${ink}" stroke-width="1.8" stroke-linecap="round"/>`;
-    const brows = `<path d="M31 46Q37 41.5 44 45M56 45Q63 41.5 69 46" fill="none" stroke="${hair === '#EDE3D2' ? '#8B6A4A' : hair}" stroke-width="2.4" stroke-linecap="round"/>`;
+    // face: simple and graphic — solid oval eyes, short rounded brows, a soft nose, a one-line mouth
+    const browColor = hair === '#EDE3D2' ? '#8B6A4A' : shade(hair, 0.15);
+    const eyeStyle = pick([0, 0, 0, 1, 2, 3], 'e');
+    const eye = (cx, right) => {
+      if (eyeStyle === 1 || (eyeStyle === 2 && right)) // happy arc (both), or a wink (right eye)
+        return `<path d="M${cx - 4.6} 58.5Q${cx} 52.5 ${cx + 4.6} 58.5" fill="none" stroke="${ink}" stroke-width="2.8" stroke-linecap="round"/>`;
+      if (eyeStyle === 3) return `<circle cx="${cx}" cy="57" r="2.8" fill="${ink}"/>`;  // dot eyes
+      return `<ellipse cx="${cx}" cy="57" rx="3.4" ry="4.7" fill="${ink}"/><circle cx="${cx + 1.1}" cy="55.2" r="1.25" fill="#fff"/>`;
+    };
+    const brows = [
+      'M32 47.5Q37.5 45.5 43 47.5M57 47.5Q62.5 45.5 68 47.5',   // relaxed
+      'M32 46Q37.5 41.5 43 45M57 45Q62.5 41.5 68 46',           // raised
+      'M32 45L43 48M57 48L68 45',                               // determined
+      'M32 48L43 45.5M57 45.5L68 48',                           // worried
+    ][pick([0, 0, 1, 2, 3], 'b')];
     const mouths = [
-      `<path d="M41 70Q45.5 66.5 50 68.6Q54.5 66.5 59 70Q55 76.6 50 76.6Q45 76.6 41 70Z" fill="${lips}"/><ellipse cx="53.5" cy="73" rx="2.6" ry="1.1" fill="#fff" opacity=".7"/>`,
-      `<path d="M42 70Q50 73 58 68Q55 75.5 49 75.6Q44 75.4 42 70Z" fill="${lips}"/><ellipse cx="52" cy="72.6" rx="2.2" ry="1" fill="#fff" opacity=".7"/>`,
-      `<path d="M40 68Q50 72 60 68Q57 79 50 79Q43 79 40 68Z" fill="${lips}"/><path d="M42 69.4Q50 72.6 58 69.4L57 71.6Q50 74 43 71.6Z" fill="#fff"/>`,
-    ][mouth];
+      `<path d="M42.5 71.5Q50 77.5 57.5 71.5" fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/>`,
+      `<path d="M41.5 70.5Q50 81 58.5 70.5Z" fill="${ink}"/><path d="M43.4 71.2Q50 73.6 56.6 71.2L56 72.8Q50 75 44 72.8Z" fill="#fff"/>`,
+      `<ellipse cx="50" cy="73" rx="2.8" ry="3.4" fill="${ink}"/>`,
+      `<path d="M44 73.5Q51 75.5 57 71" fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/>`,
+    ][pick([0, 0, 1, 1, 2, 3], 'm')];
+    const nose = `<path d="M47.6 64.5Q50 67 52.4 64.5" fill="none" stroke="${shade(skin, 0.35)}" stroke-width="2" stroke-linecap="round"/>`;
 
     // hair in front of the face
     const front = [
@@ -103,8 +110,6 @@
       ? `<g><rect x="28" y="22" width="19" height="11" rx="5.5" fill="${pick(['#FF7A45', '#1FA8D2', '#D4EEF6'], 'lens')}" opacity=".85" stroke="${ink}" stroke-width="1.8"/><rect x="53" y="22" width="19" height="11" rx="5.5" fill="${pick(['#FF7A45', '#1FA8D2', '#D4EEF6'], 'lens')}" opacity=".85" stroke="${ink}" stroke-width="1.8"/><path d="M47 27H53" stroke="${ink}" stroke-width="1.8"/></g>` : '';
     const tiara = !shades && chance(14, 'tiara') && [0, 1, 3].includes(style)
       ? `<path d="M36 20L40 11L45 17L50 6L55 17L60 11L64 20Z" fill="#F6F1E9" stroke="${ink}" stroke-width="1.4" stroke-linejoin="round"/><circle cx="50" cy="15" r="2.2" fill="${gem}"/>` : '';
-    const sticker = chance(22, 'star') ? `<path d="M73 61l1.6 3.2 3.5.5-2.5 2.5.6 3.5-3.2-1.7-3.2 1.7.6-3.5-2.5-2.5 3.5-.5Z" fill="#F4D58D"/>` : '';
-    const mole = chance(20, 'mole') ? `<circle cx="61" cy="76.5" r="1.2" fill="${ink}"/>` : '';
 
     // Old-school 3D: every surface is lit from the top left, hair gets a gloss streak, the head casts a shadow.
     const id = hashName(key).toString(36);
@@ -116,17 +121,17 @@
     </defs>`;
     const gloss = style === 5 ? '' : `<ellipse cx="37" cy="${style === 6 ? 20 : 22}" rx="13" ry="5" fill="url(#gl${id})" transform="rotate(-22 37 22)"/>`;
     const faceShine = `<ellipse cx="37" cy="38" rx="9" ry="6" fill="url(#gl${id})" opacity=".55"/>`;
-    const chinShadow = `<ellipse cx="50" cy="92" rx="20" ry="5" fill="#140c08" opacity=".22"/>`;
+    const chinShadow = `<ellipse cx="50" cy="93" rx="17" ry="4.5" fill="#140c08" opacity=".22"/>`;
 
     const svg = `<svg class="buddy-art" viewBox="0 0 100 120" aria-hidden="true">${defs}
       ${back}${outfits}
       <rect x="43" y="82" width="14" height="14" rx="5" fill="${skin}"/>
-      <circle cx="17" cy="58" r="6.5" fill="${skin}"/><circle cx="83" cy="58" r="6.5" fill="${skin}"/>
+      <circle cx="16.5" cy="58" r="6" fill="${skin}"/><circle cx="83.5" cy="58" r="6" fill="${skin}"/>
       ${chinShadow}
-      <circle cx="50" cy="53" r="34" fill="${skin}"/>${faceShine}
+      <path d="M50 15C73 15 85 33 85 54C85 76 70 92 50 92C30 92 15 76 15 54C15 33 27 15 50 15Z" fill="${skin}"/>${faceShine}
       ${hoops}
-      <ellipse cx="29" cy="66" rx="6.4" ry="3.6" fill="#FF5A1F" opacity=".3"/><ellipse cx="71" cy="66" rx="6.4" ry="3.6" fill="#FF5A1F" opacity=".3"/>
-      ${brows}${eye(38, false)}${eye(62, true)}${mouths}${mole}${sticker}${front}${gloss}${shades}${tiara}
+      <ellipse cx="30" cy="67" rx="5.4" ry="3" fill="#FF5A1F" opacity=".2"/><ellipse cx="70" cy="67" rx="5.4" ry="3" fill="#FF5A1F" opacity=".2"/>
+      <path d="${brows}" fill="none" stroke="${browColor}" stroke-width="3.2" stroke-linecap="round"/>${eye(38, false)}${eye(62, true)}${nose}${mouths}${front}${gloss}${shades}${tiara}
     </svg>`;
     // swap the flat fills for the shaded ones
     return svg.replaceAll(`fill="${skin}"`, `fill="url(#sk${id})"`)
@@ -140,6 +145,9 @@
     del ? `<button class="rdel" data-act="rdel" data-r="${i}" aria-label="Remove area">×</button>` : ''}</div>`;
   const marker = (x, y, cls = '', title = '') => `<span class="marker ${cls}" style="left:${pct(x)};top:${pct(y)}"${title ? ` title="${esc(title)}"` : ''}>${PIN}</span>`;
   const pinBox = (src, inner = '', cls = '') => `<div class="pinbox ${cls}"><img src="${src}" alt="" draggable="false" decoding="async">${inner}</div>`;
+  // A player's pins: [[x, y], …] (older games sent a single [x, y]).
+  const pinsOf = (choice) => (Array.isArray(choice) && typeof choice[0] === 'number' ? [choice] : choice || []);
+  const inRegion = (r, [x, y]) => r.x <= x && x <= r.x + r.w && r.y <= y && y <= r.y + r.h;
   const fracAt = (box, e) => { const b = box.getBoundingClientRect(); return [clamp((e.clientX - b.left) / b.width), clamp((e.clientY - b.top) / b.height)]; };
 
   let cleanup = null;      // tears down the current view's live connection
@@ -355,6 +363,79 @@
 
   // ---------- home ----------
 
+  // ---------- home showcase ----------
+  // Little live previews of the product, drawn with the app's own pieces (no screenshots).
+  function showcase() {
+    const crowd = ['Maya', 'Leo', 'Sofia', 'Kostas', 'Priya', 'Tom', 'Nia', 'Ravi']
+      .map((n, i) => `<div class="mini-buddy" style="--d:${i * 70}ms">${avatar(`showcase-${n}`)}<span>${n}</span></div>`).join('');
+    const podium = [['Priya', 2, '2,840'], ['Maya', 1, '3,410'], ['Leo', 3, '2,215']]
+      .map(([n, place, pts]) => `<div class="mini-step s${place}">${avatar(`showcase-${n}`)}<strong>${n}</strong><small>${pts}</small><div class="mini-block">${place}</div></div>`).join('');
+    const answers = ['Mars', 'Venus', 'Jupiter', 'Saturn'];
+    // A believable made-up landing page in a browser window, to pin on.
+    const page = `<svg viewBox="0 0 320 200" class="mini-page" aria-hidden="true">
+        <defs>
+          <linearGradient id="sc-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF7A45"/><stop offset="1" stop-color="#EBC9A5"/></linearGradient>
+        </defs>
+        <rect width="320" height="200" rx="12" fill="#FBF8F3"/>
+        <path d="M0 12a12 12 0 0 1 12-12h296a12 12 0 0 1 12 12v8H0Z" fill="#E7E1D6"/>
+        <circle cx="12" cy="10" r="3" fill="#FF5A1F"/><circle cx="22" cy="10" r="3" fill="#EBC9A5"/><circle cx="32" cy="10" r="3" fill="#1FA8D2"/>
+        <rect x="96" y="5" width="128" height="10" rx="5" fill="#FBF8F3"/><text x="160" y="12.6" text-anchor="middle" font-size="6.4" fill="#7C8B91" font-family="DM Sans, sans-serif">lumencoffee.co</text>
+        <text x="14" y="38" font-size="10" font-weight="800" fill="#032A3C" font-family="Bricolage Grotesque, sans-serif">lumen.</text>
+        <g font-size="6.6" fill="#55666D" font-family="DM Sans, sans-serif"><text x="150" y="37">Shop</text><text x="174" y="37">Recipes</text><text x="206" y="37">About</text></g>
+        <rect x="246" y="28" width="60" height="14" rx="7" fill="#032A3C"/><text x="276" y="37.6" text-anchor="middle" font-size="6.4" font-weight="700" fill="#FBF8F3" font-family="DM Sans, sans-serif">Order now</text>
+        <text x="14" y="70" font-size="17" font-weight="800" fill="#032A3C" font-family="Bricolage Grotesque, sans-serif">Brew better</text>
+        <text x="14" y="89" font-size="17" font-weight="800" fill="#FF5A1F" font-family="Bricolage Grotesque, sans-serif">mornings.</text>
+        <rect x="14" y="98" width="128" height="5" rx="2.5" fill="#C9D2D5"/><rect x="14" y="108" width="104" height="5" rx="2.5" fill="#C9D2D5"/>
+        <rect x="14" y="120" width="56" height="15" rx="7.5" fill="#FF5A1F"/><text x="42" y="129.8" text-anchor="middle" font-size="6.4" font-weight="700" fill="#FBF8F3" font-family="DM Sans, sans-serif">Start a box</text>
+        <rect x="76" y="120" width="50" height="15" rx="7.5" fill="none" stroke="#032A3C" stroke-width="1"/><text x="101" y="129.8" text-anchor="middle" font-size="6.4" font-weight="700" fill="#032A3C" font-family="DM Sans, sans-serif">Our beans</text>
+        <rect x="170" y="52" width="136" height="88" rx="10" fill="url(#sc-sky)"/>
+        <circle cx="238" cy="104" r="18" fill="#FBF8F3" opacity=".9"/>
+        <path d="M170 118Q200 98 230 116T306 110V130a10 10 0 0 1-10 10H180a10 10 0 0 1-10-10Z" fill="#0A6C93"/>
+        <path d="M170 128Q214 112 250 126T306 124V130a10 10 0 0 1-10 10H180a10 10 0 0 1-10-10Z" fill="#032A3C"/>
+        <g fill="#FFFFFF" stroke="#E7E1D6"><rect x="14" y="152" width="92" height="36" rx="8"/><rect x="114" y="152" width="92" height="36" rx="8"/><rect x="214" y="152" width="92" height="36" rx="8"/></g>
+        <g fill="#1FA8D2"><circle cx="28" cy="166" r="6"/><circle cx="128" cy="166" r="6" fill="#FF5A1F"/><circle cx="228" cy="166" r="6" fill="#EBC9A5"/></g>
+        <g fill="#C9D2D5"><rect x="40" y="162" width="52" height="4" rx="2"/><rect x="40" y="170" width="38" height="4" rx="2"/><rect x="140" y="162" width="52" height="4" rx="2"/><rect x="140" y="170" width="38" height="4" rx="2"/><rect x="240" y="162" width="52" height="4" rx="2"/><rect x="240" y="170" width="38" height="4" rx="2"/></g>
+      </svg>`;
+    // Where players tapped (percent of the page): most found the headline, two didn't.
+    const taps = [[13, 36, 'ok'], [22, 33, 'ok'], [31, 37, 'ok'], [17, 44, 'ok'], [27, 45, 'ok'], [36, 43, 'ok'], [74, 52, 'miss'], [29, 64, 'miss']];
+    return `
+      <section class="showcase" aria-label="What a game looks like">
+        <p class="eyebrow">See it in action</p>
+        <h2 class="display">One link. A room full of <em>players.</em></h2>
+        <div class="shots">
+          <figure class="shot shot-lobby">
+            <div class="shot-head"><span class="shot-tag">Lobby</span><span class="mini-count">8 players</span></div>
+            <div class="mini-pin">482 913</div>
+            <div class="mini-crowd">${crowd}</div>
+            <figcaption>Everyone joins with a PIN and gets their own character.</figcaption>
+          </figure>
+          <figure class="shot shot-phone">
+            <div class="phone">
+              <div class="mini-timer"><i></i></div>
+              <div class="mini-bar"><span>2 / 8</span><span class="mini-secs">14s</span></div>
+              <p class="mini-q">Which planet is known as the red one?</p>
+              <div class="mini-tiles">${answers.map((a, i) => `<div class="mini-tile t${i}"><b>${L[i]}</b>${a}</div>`).join('')}</div>
+            </div>
+            <figcaption>Players answer on their phones. Faster right answers score more.</figcaption>
+          </figure>
+          <figure class="shot shot-pin">
+            <div class="shot-head"><span class="shot-tag">Pin mode</span><span class="mini-count">6 of 8 landed inside</span></div>
+            <p class="mini-ask">Tap the main headline</p>
+            <div class="mini-pinbox">${page}
+              <div class="region" style="left:3%;top:24%;width:44%;height:23%"></div>
+              ${taps.map(([x, y, c], i) => `<span class="marker small drop-in ${c}" style="left:${x}%;top:${y}%;animation-delay:${200 + i * 90}ms">${PIN}</span>`).join('')}
+            </div>
+            <figcaption>Put up any picture, mark the right area, and players drop a pin on it.</figcaption>
+          </figure>
+          <figure class="shot shot-podium">
+            <div class="shot-head"><span class="shot-tag">Final podium</span></div>
+            <div class="mini-podium">${podium}</div>
+            <figcaption>A live leaderboard after every question, and a podium at the end.</figcaption>
+          </figure>
+        </div>
+      </section>`;
+  }
+
   function viewHome() {
     app.innerHTML = `
       <main class="page home">
@@ -371,6 +452,7 @@
             </form>
           </div>
         </section>
+        ${showcase()}
         <section class="steps">
           <article><span>01</span><h3>Build</h3><p>A question, a picture, up to four answers. Mark the right one.</p></article>
           <article><span>02</span><h3>Share</h3><p>Open the lobby and send the link or the six-digit PIN.</p></article>
@@ -484,7 +566,7 @@
         <input class="q-input" data-f="title" maxlength="200" placeholder="${pin ? 'e.g. Tap the ugliest part of this UI' : 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
         ${picture}
         ${pin ? `<div class="pinrow"><p class="hint">${!q.image ? 'Add a picture, then drag on it to mark the right area.'
-          : regions.length ? `${regions.length} area${regions.length === 1 ? '' : 's'} marked — pins landing inside score. Drag to add more.`
+          : regions.length ? `${regions.length} area${regions.length === 1 ? '' : 's'} marked — players get ${regions.length} pin${regions.length === 1 ? '' : 's'} and need one in every area for full points. Drag to add more.`
           : 'Drag on the picture to mark the right area. You can mark several.'}</p>
           ${q.image ? '<button class="ghost" data-act="noimg">Remove picture</button>' : ''}</div>` : `
         <div class="answers-edit">
@@ -702,7 +784,9 @@
                 <span class="pill dim">${q.type === 'pin' ? 'Pin' : 'Quiz'}</span><span class="pill">${q.time}s</span></header>
               <h2>${esc(q.title)}</h2>
               ${q.type === 'pin'
-                ? `${pinBox(q.image, q.regions.map((r) => regionEl(r)).join(''))}<p class="hint">Pins inside the highlighted area${q.regions.length > 1 ? 's' : ''} score.</p>`
+                ? `${pinBox(q.image, q.regions.map((r) => regionEl(r)).join(''))}<p class="hint">${q.regions.length > 1
+                  ? `Players drop up to ${q.regions.length} pins. A pin in every area scores full points; each area found earns its share.`
+                  : 'Pins inside the highlighted area score.'}</p>`
                 : `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
                    ${tiles(q.answers, (k) => (k === q.correct ? { cls: 'right', extra: '<em>✓ Correct</em>' } : { cls: 'soft' }))}`}
             </section>`).join('')}
@@ -768,7 +852,7 @@
           ? `${pinBox(q.image, reveal
               ? s.regions.map((r) => regionEl(r)).join('') + s.pins.map((p) => marker(p.x, p.y, `small drop-in ${p.ok ? 'ok' : 'miss'}`, p.name)).join('')
               : '')}
-             ${reveal ? `<p class="pinstat"><strong>${s.hits}</strong> of ${s.count} landed inside</p>` : ''}`
+             ${reveal ? `<p class="pinstat"><strong>${s.hits}</strong> of ${s.count} ${s.regions.length > 1 ? `found all ${s.regions.length} areas` : 'landed inside'}</p>` : ''}`
           : q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : '';
         app.innerHTML = `
           <main class="page stage ${reveal ? 'is-reveal' : ''} ${pin ? 'pinq' : ''}">
@@ -921,29 +1005,44 @@
             <section class="qwrap"><div class="qmain">
               <h1 class="qtitle">${esc(q.title)}</h1>
               ${pinBox(q.image, '', 'tap')}
-              <p class="hint" id="pinhint">Tap the picture to drop your pin</p>
+              <p class="hint" id="pinhint"></p>
             </div></section>
-            <div class="lockbar"><button class="btn primary" id="lock" disabled>Lock in pin →</button></div>
+            <div class="lockbar"><button class="btn primary" id="lock" disabled>Lock in →</button></div>
           </main>`;
-        let pick = null;
+        // Drop up to one pin per target area; tap a pin to pick it back up.
+        const max = q.maxPins || 1;
+        const picks = [];
         const box = $('.pinbox');
+        const update = () => {
+          box.querySelectorAll('.marker').forEach((m) => m.remove());
+          picks.forEach((p, i) => box.insertAdjacentHTML('beforeend', marker(p.x, p.y, `${i === picks.length - 1 ? 'drop-in' : ''}`)));
+          const left = max - picks.length;
+          $('#pinhint').textContent = !picks.length
+            ? (max > 1 ? `Find ${max} spots: tap to drop up to ${max} pins, one in each` : 'Tap the picture to drop your pin')
+            : left ? `${left} pin${left === 1 ? '' : 's'} left · tap a pin to remove it` : 'All pins placed · tap a pin to move it';
+          $('#lock').disabled = !picks.length;
+          $('#lock').textContent = picks.length > 1 ? `Lock in ${picks.length} pins →` : 'Lock in pin →';
+        };
         box.onpointerdown = (e) => {
           if (box.classList.contains('locked')) return;
           e.preventDefault();
           const [x, y] = fracAt(box, e);
-          pick = { x: r4(x), y: r4(y) };
-          box.querySelector('.marker')?.remove();
-          box.insertAdjacentHTML('beforeend', marker(x, y, 'drop-in'));
+          const b = box.getBoundingClientRect();
+          // Tapping close to a pin you placed removes it.
+          const near = picks.findIndex((p) => Math.hypot((p.x - x) * b.width, (p.y - y) * b.height) < 22);
+          if (near >= 0) picks.splice(near, 1);
+          else if (picks.length < max) picks.push({ x: r4(x), y: r4(y) });
+          else return toast(`That's all ${max} pins — tap one to move it`);
           buzz(8);
-          $('#lock').disabled = false;
-          $('#pinhint').textContent = 'Tap again to move it';
+          update();
         };
+        update();
         $('#lock').onclick = () => {
-          if (!pick) return;
+          if (!picks.length) return;
           $('#lock').disabled = true;
           box.classList.add('locked');
           buzz(12);
-          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: pick })
+          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: picks })
             .catch((err) => { toast(err.message); $('#lock').disabled = false; box.classList.remove('locked'); });
         };
         return;
@@ -986,16 +1085,19 @@
       if (s.phase === 'reveal') {
         const right = s.right;
         const pin = s.question.type === 'pin';
-        const why = right ? (pin ? 'Right on target.' : 'Correct — nicely done.')
-          : pin ? (s.choice === null ? 'Here’s where the right area was.' : 'Your pin landed outside the area.')
+        const areas = pin ? s.regions.length : 0;
+        const partial = pin && !right && s.found > 0;
+        const why = right ? (pin ? (areas > 1 ? `You found all ${areas} areas.` : 'Right on target.') : 'Correct — nicely done.')
+          : pin ? (s.choice === null ? `Here’s where the right area${areas > 1 ? 's were' : ' was'}.`
+            : partial ? `You found ${s.found} of ${areas} areas.` : `Your pin${pinsOf(s.choice).length > 1 ? 's' : ''} missed the area${areas > 1 ? 's' : ''}.`)
           : `The answer was <strong>${esc(s.question.answers[s.correct])}</strong>.`;
         buzz(right ? [14, 60, 14] : 40);
         return centered(`
-          <div class="verdict ${right ? 'good' : 'bad'}">${right ? '✓' : '✕'}</div>
-          <h1 class="display">${right ? `+${fmt(s.gained)}` : s.choice === null ? 'Time’s <em>up.</em>' : 'Not <em>quite.</em>'}</h1>
+          <div class="verdict ${right ? 'good' : partial ? 'half' : 'bad'}">${right ? '✓' : partial ? '½' : '✕'}</div>
+          <h1 class="display">${right || partial ? `+${fmt(s.gained)}` : s.choice === null ? 'Time’s <em>up.</em>' : 'Not <em>quite.</em>'}</h1>
           <p class="lede">${why}</p>
           ${pin ? pinBox(s.question.image, s.regions.map((r) => regionEl(r)).join('')
-            + (s.choice ? marker(s.choice[0], s.choice[1], `drop-in ${right ? 'ok' : 'miss'}`) : ''), 'result') : ''}
+            + pinsOf(s.choice).map((pt) => marker(pt[0], pt[1], `drop-in ${s.regions.some((r) => inRegion(r, pt)) ? 'ok' : 'miss'}`)).join(''), 'result') : ''}
           <p class="standing">${ordinal(s.rank)} of ${s.count} · ${fmt(s.score)} pts</p>`);
       }
 

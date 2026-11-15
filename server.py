@@ -134,12 +134,28 @@ def is_pin(q):
     return q.get("type") == "pin"
 
 
+# Pin questions: a player may drop up to one pin per target area. Each area with at least one
+# pin in it counts as found; finding every area is a full right answer.
+def in_region(r, pt):
+    x, y = pt
+    return r["x"] <= x <= r["x"] + r["w"] and r["y"] <= y <= r["y"] + r["h"]
+
+
+def pins_of(choice):
+    if not choice:
+        return []
+    return [choice] if isinstance(choice[0], (int, float)) else choice
+
+
+def areas_found(q, choice):
+    return sum(any(in_region(r, pt) for pt in pins_of(choice)) for r in q["regions"])
+
+
 def is_right(q, choice):
     if choice is None:
         return False
     if is_pin(q):
-        x, y = choice
-        return any(r["x"] <= x <= r["x"] + r["w"] and r["y"] <= y <= r["y"] + r["h"] for r in q["regions"])
+        return areas_found(q, choice) == len(q["regions"])
     return choice == q["correct"]
 
 
@@ -274,7 +290,7 @@ class Game:
     def ask(self, i):
         self.q, self.phase, self.started = i, "question", time.time()
         for p in self.players.values():
-            p["choice"], p["ms"], p["gained"], p["right"] = None, 0, 0, False
+            p["choice"], p["ms"], p["gained"], p["right"], p["found"] = None, 0, 0, False, 0
         self.timer = threading.Timer(self.quiz["questions"][i]["time"] + 0.4, self.timeout, [i])
         self.timer.daemon = True
         self.timer.start()
@@ -290,13 +306,20 @@ class Game:
             return
         q = self.quiz["questions"][self.q]
         if is_pin(q):
-            try:
-                x, y = float(choice["x"]), float(choice["y"])
-            except (TypeError, KeyError, ValueError):
+            # One pin ({x, y}) or several ([{x, y}, ...]), at most one per target area.
+            items = choice if isinstance(choice, list) else [choice]
+            if not items or len(items) > len(q["regions"]):
                 return
-            if not (0 <= x <= 1 and 0 <= y <= 1):
-                return
-            choice = [round(x, 4), round(y, 4)]
+            pts = []
+            for c in items:
+                try:
+                    x, y = float(c["x"]), float(c["y"])
+                except (TypeError, KeyError, ValueError):
+                    return
+                if not (0 <= x <= 1 and 0 <= y <= 1):
+                    return
+                pts.append([round(x, 4), round(y, 4)])
+            choice = pts
         elif isinstance(choice, bool) or not isinstance(choice, int) or not 0 <= choice < len(q["answers"]):
             return
         p["choice"], p["ms"] = choice, (time.time() - self.started) * 1000
@@ -311,10 +334,16 @@ class Game:
         q = self.quiz["questions"][self.q]
         for p in self.players.values():
             p["right"] = is_right(q, p["choice"])
-            if p["right"]:
-                # Right answers earn 500-1000: the faster, the closer to 1000.
+            # Pin questions give credit for each area found; quiz questions are all or nothing.
+            if is_pin(q):
+                p["found"] = 0 if p["choice"] is None else areas_found(q, p["choice"])
+                share = p["found"] / len(q["regions"])
+            else:
+                share = 1 if p["right"] else 0
+            if share > 0:
+                # Right answers earn 500-1000: the faster, the closer to 1000. Partly right pins earn their share of that.
                 frac = min(1.0, p["ms"] / (q["time"] * 1000))
-                p["gained"] = round(1000 * (1 - frac / 2))
+                p["gained"] = round(1000 * (1 - frac / 2) * share)
                 p["score"] += p["gained"]
         self.phase = "reveal"
         self.push()
@@ -343,9 +372,12 @@ class Game:
 
     def question(self):
         q = self.quiz["questions"][self.q]
-        return {"type": "pin" if is_pin(q) else "quiz", "title": q["title"],
-                "answers": q.get("answers", []), "time": q["time"],
-                "image": image_url(self.quiz_id, self.quiz, self.q)}
+        out = {"type": "pin" if is_pin(q) else "quiz", "title": q["title"],
+               "answers": q.get("answers", []), "time": q["time"],
+               "image": image_url(self.quiz_id, self.quiz, self.q)}
+        if is_pin(q):
+            out["maxPins"] = len(q["regions"])  # how many pins a player may drop (one per area)
+        return out
 
     def state(self, pid):
         board = self.board()
@@ -370,15 +402,16 @@ class Game:
                 s["answered"] = sum(c is not None for c in picks)
                 if self.phase == "reveal":
                     if is_pin(q):
-                        s["pins"] = [{"x": p["choice"][0], "y": p["choice"][1], "ok": p["right"], "name": p["name"]}
-                                     for p in self.players.values() if p["choice"] is not None]
+                        s["pins"] = [{"x": pt[0], "y": pt[1], "ok": any(in_region(r, pt) for r in q["regions"]), "name": p["name"]}
+                                     for p in self.players.values() if p["choice"] is not None for pt in pins_of(p["choice"])]
                         s["hits"] = sum(p["right"] for p in self.players.values())
                     else:
                         s["counts"] = [picks.count(i) for i in range(len(s["question"]["answers"]))]
         else:
             p = self.players[pid]
             s.update(role="player", name=p["name"], look=p.get("look"), score=p["score"], gained=p["gained"],
-                     choice=p["choice"], right=p["right"], rank=[r["id"] for r in board].index(pid) + 1)
+                     choice=p["choice"], right=p["right"], found=p.get("found", 0),
+                     rank=[r["id"] for r in board].index(pid) + 1)
         return s
 
     def push(self):

@@ -121,12 +121,15 @@ function cleanRegions(regions, n) {
 
 const isPin = (q) => q.type === "pin";
 
+// Pin questions: a player may drop up to one pin per target area. Each area with at least one
+// pin in it counts as found; finding every area is a full right answer.
+const inRegion = (r, [x, y]) => r.x <= x && x <= r.x + r.w && r.y <= y && y <= r.y + r.h;
+const pinsOf = (choice) => (Array.isArray(choice) && typeof choice[0] === "number" ? [choice] : choice || []);
+const areasFound = (q, choice) => q.regions.filter((r) => pinsOf(choice).some((pt) => inRegion(r, pt))).length;
+
 function isRight(q, choice) {
   if (choice === null || choice === undefined) return false;
-  if (isPin(q)) {
-    const [x, y] = choice;
-    return q.regions.some((r) => r.x <= x && x <= r.x + r.w && r.y <= y && y <= r.y + r.h);
-  }
+  if (isPin(q)) return areasFound(q, choice) === q.regions.length;
   return choice === q.correct;
 }
 
@@ -586,7 +589,7 @@ export class GameRoom extends DurableObject {
   async ask(i) {
     const s = this.s;
     Object.assign(s, { q: i, phase: "question", started: Date.now() });
-    for (const p of Object.values(s.players)) Object.assign(p, { choice: null, ms: 0, gained: 0, right: false });
+    for (const p of Object.values(s.players)) Object.assign(p, { choice: null, ms: 0, gained: 0, right: false, found: 0 });
     this.push();
     await this.persist();
   }
@@ -596,9 +599,12 @@ export class GameRoom extends DurableObject {
     if (s.phase !== "question" || p.choice !== null) return;
     const q = s.quiz.questions[s.q];
     if (isPin(q)) {
-      const valid = choice && typeof choice === "object" && typeof choice.x === "number" && typeof choice.y === "number";
-      if (!valid || !(choice.x >= 0 && choice.x <= 1 && choice.y >= 0 && choice.y <= 1)) return;
-      choice = [round4(choice.x), round4(choice.y)];
+      // One pin ({x, y}) or several ([{x, y}, …]), at most one per target area.
+      const list = Array.isArray(choice) ? choice : [choice];
+      const ok = (c) => c && typeof c === "object" && typeof c.x === "number" && typeof c.y === "number" &&
+        c.x >= 0 && c.x <= 1 && c.y >= 0 && c.y <= 1;
+      if (!list.length || list.length > q.regions.length || !list.every(ok)) return;
+      choice = list.map((c) => [round4(c.x), round4(c.y)]);
     } else if (!Number.isInteger(choice) || choice < 0 || choice >= q.answers.length) {
       return;
     }
@@ -614,10 +620,13 @@ export class GameRoom extends DurableObject {
     const q = s.quiz.questions[s.q];
     for (const p of Object.values(s.players)) {
       p.right = isRight(q, p.choice);
-      if (p.right) {
-        // Right answers earn 500-1000: the faster, the closer to 1000.
+      // Pin questions give credit for each area found; quiz questions are all or nothing.
+      const share = isPin(q) ? (p.choice === null ? 0 : areasFound(q, p.choice) / q.regions.length) : p.right ? 1 : 0;
+      if (isPin(q)) p.found = p.choice === null ? 0 : areasFound(q, p.choice);
+      if (share > 0) {
+        // Right answers earn 500-1000: the faster, the closer to 1000. Partly right pins earn their share of that.
         const frac = Math.min(1, p.ms / (q.time * 1000));
-        p.gained = Math.round(1000 * (1 - frac / 2));
+        p.gained = Math.round(1000 * (1 - frac / 2) * share);
         p.score += p.gained;
       }
     }
@@ -658,7 +667,8 @@ export class GameRoom extends DurableObject {
 
   question() {
     const q = this.s.quiz.questions[this.s.q];
-    return { type: isPin(q) ? "pin" : "quiz", title: q.title, answers: q.answers || [], time: q.time, image: q.image };
+    return { type: isPin(q) ? "pin" : "quiz", title: q.title, answers: q.answers || [], time: q.time, image: q.image,
+      ...(isPin(q) ? { maxPins: q.regions.length } : {}) };  // how many pins a player may drop (one per area)
   }
 
   state(pid) {
@@ -687,7 +697,7 @@ export class GameRoom extends DurableObject {
         if (s.phase === "reveal") {
           if (isPin(q)) {
             st.pins = players.filter((p) => p.choice !== null)
-              .map((p) => ({ x: p.choice[0], y: p.choice[1], ok: p.right, name: p.name }));
+              .flatMap((p) => pinsOf(p.choice).map((pt) => ({ x: pt[0], y: pt[1], ok: q.regions.some((r) => inRegion(r, pt)), name: p.name })));
             st.hits = players.filter((p) => p.right).length;
           } else {
             st.counts = st.question.answers.map((_, i) => players.filter((p) => p.choice === i).length);
@@ -697,7 +707,7 @@ export class GameRoom extends DurableObject {
     } else {
       const p = s.players[pid];
       Object.assign(st, {
-        role: "player", name: p.name, look: p.look, score: p.score, gained: p.gained, choice: p.choice, right: p.right,
+        role: "player", name: p.name, look: p.look, score: p.score, gained: p.gained, choice: p.choice, right: p.right, found: p.found || 0,
         rank: board.findIndex((r) => r.id === pid) + 1,
       });
     }
