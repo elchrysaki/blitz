@@ -362,7 +362,7 @@
   function viewHome() {
     app.innerHTML = `
       <main class="page home">
-        ${nav('<a class="btn small" href="/create" data-link>New quiz</a>')}
+        ${nav('<a class="btn small nav-cta" href="/create" data-link>New quiz</a>')}
         <section class="hero">
           <p class="eyebrow">Live quizzes · zero setup</p>
           <h1 class="mega">Ask.<br><em>Race.</em><br>Win.</h1>
