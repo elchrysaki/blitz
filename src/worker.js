@@ -4,7 +4,8 @@
 // - One Durable Object per game PIN (binding GAME) runs the live game: players, timer, scores,
 //   and pushes updates to every screen over server-sent events.
 // - No accounts: each browser gets a private cookie. Everything tied to it is kept for 7 days
-//   after the last visit; a daily cron forgets browsers that haven't been back.
+//   after the last visit; a daily cron forgets browsers that haven't been back, and deletes
+//   quizzes nobody has played or edited for 15 days.
 //
 // The API matches server.py (the local, standard-library Python version), so public/app.js runs on either.
 import { DurableObject } from "cloudflare:workers";
@@ -12,6 +13,8 @@ import { DurableObject } from "cloudflare:workers";
 const DAY = 86400;
 const WEEK = 7 * DAY;
 const GAME_TTL = 4 * 3600; // a live game lasts at most 4 hours
+const QUIZ_TTL = 15 * DAY; // a quiz nobody has played or edited for 15 days is deleted
+const COVER = 999;         // picture slot for the quiz's intro picture
 const COOKIE = "blitz_uid";
 const TIMES = [10, 20, 30, 60];
 const IMG_RE = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$/;
@@ -71,7 +74,20 @@ function cleanQuiz(body, quizId = null, old = null) {
     questions.push({ type: "quiz", title: qtitle, answers, correct, time, image: !!image });
     images.push(image);
   });
-  return { title, questions, images };
+  const cover = cleanCover(body.cover, quizId, old);
+  return { title, questions, images, cover };
+}
+
+// The quiz's intro picture: a new upload, "keep the one you have", or none.
+function cleanCover(image, quizId, old) {
+  if (!image) return null;
+  if (typeof image === "string") {
+    const m = IMG_RE.exec(image);
+    if (m) return { mime: `image/${m[1]}`, data: m[2] };
+    const k = KEEP_RE.exec(image);
+    if (k && old && k[1] === quizId && +k[2] === COVER && old.cover) return { keep: COVER };
+  }
+  throw new UserError("The intro picture isn't supported");
 }
 
 function cleanImage(image, quizId, old, n) {
@@ -80,7 +96,7 @@ function cleanImage(image, quizId, old, n) {
     const m = IMG_RE.exec(image);
     if (m) return { mime: `image/${m[1]}`, data: m[2] };
     const k = KEEP_RE.exec(image);
-    if (k && old && k[1] === quizId && +k[2] < old.questions.length) {
+    if (k && old && k[1] === quizId && +k[2] !== COVER && +k[2] < old.questions.length) {
       return old.questions[+k[2]].image ? { keep: +k[2] } : null;
     }
   }
@@ -118,6 +134,7 @@ function isRight(q, choice) {
 const imageUrl = (id, v, i) => `/api/quizzes/${id}/image/${i}?v=${v}`;
 const publicQuestions = (quiz) =>
   quiz.questions.map((q, i) => ({ ...q, image: q.image ? imageUrl(quiz.id, quiz.v, i) : null }));
+const coverUrl = (quiz) => (quiz.cover ? imageUrl(quiz.id, quiz.v, COVER) : null);
 
 async function loadQuiz(env, id) {
   if (typeof id !== "string" || !ID_RE.test(id)) return null;
@@ -133,23 +150,25 @@ async function ownQuiz(env, id, uid) {
   return { quiz };
 }
 
-async function writeImages(env, id, images) {
+async function writeImages(env, id, questionImages, cover = null) {
+  const images = new Map(questionImages.entries());
+  images.set(COVER, cover); // the intro picture lives in its own slot
   // Pictures kept from the old version but moved to another position: read them before anything is overwritten.
   const moved = new Map();
-  for (const [i, src] of images.entries()) {
+  for (const [i, src] of images) {
     if (src && src.keep !== undefined && src.keep !== i && !moved.has(src.keep)) {
       moved.set(src.keep, await env.DB.prepare("SELECT mime, data FROM images WHERE quiz_id = ? AND idx = ?")
         .bind(id, src.keep).first());
     }
   }
-  for (const [i, src] of images.entries()) {
+  for (const [i, src] of images) {
     if (!src || src.keep === i) continue; // no picture, or the same picture in the same place
     const img = src.keep !== undefined ? moved.get(src.keep) : src;
     if (!img) continue;
     await env.DB.prepare("INSERT OR REPLACE INTO images (quiz_id, idx, mime, data) VALUES (?, ?, ?, ?)")
       .bind(id, i, img.mime, img.data).run();
   }
-  const used = images.map((s, i) => (s ? i : -1)).filter((i) => i >= 0);
+  const used = [...images].filter(([, src]) => src).map(([i]) => i);
   const keep = used.length ? ` AND idx NOT IN (${used.map(() => "?").join(",")})` : "";
   await env.DB.prepare(`DELETE FROM images WHERE quiz_id = ?${keep}`).bind(id, ...used).run();
 }
@@ -186,9 +205,26 @@ function forget(env, uid) {
   ]);
 }
 
+// Quizzes nobody has played (or edited) for 15 days, unless a game of them is running right now.
+async function pruneQuizzes(env) {
+  const t = now();
+  const idle = await env.DB.prepare(
+    "SELECT id FROM quizzes WHERE MAX(updated, COALESCE(last_played, 0)) < ? " +
+    "AND id NOT IN (SELECT quiz_id FROM games WHERE done = 0 AND created > ?) LIMIT 500",
+  ).bind(t - QUIZ_TTL, t - GAME_TTL).all();
+  for (const { id } of idle.results) {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM images WHERE quiz_id = ?").bind(id),
+      env.DB.prepare("DELETE FROM quizzes WHERE id = ?").bind(id),
+    ]);
+  }
+  return idle.results.length;
+}
+
 async function prune(env) {
   const stale = await env.DB.prepare("SELECT uid FROM users WHERE seen < ? LIMIT 500").bind(now() - WEEK).all();
   for (const { uid } of stale.results) await forget(env, uid);
+  await pruneQuizzes(env);
   await env.DB.prepare("DELETE FROM games WHERE created < ?").bind(now() - DAY).run();
 }
 
@@ -198,7 +234,7 @@ async function getMe(env, uid) {
   // and (only if this browser has anything) extend its 7 days.
   const [userRows, quizRows, liveRows, playedRows] = await env.DB.batch([
     env.DB.prepare("SELECT seen FROM users WHERE uid = ?").bind(uid),
-    env.DB.prepare("SELECT id, title, questions, v, updated, plays, last_played FROM quizzes WHERE owner = ?").bind(uid),
+    env.DB.prepare("SELECT id, title, questions, v, cover, updated, plays, last_played FROM quizzes WHERE owner = ?").bind(uid),
     env.DB.prepare("SELECT quiz_id FROM games WHERE owner = ? AND done = 0 AND created > ?").bind(uid, t - GAME_TTL),
     env.DB.prepare(
       "SELECT p.*, g.gid AS live_gid FROM played p " +
@@ -214,11 +250,12 @@ async function getMe(env, uid) {
   const live = new Set(liveRows.results.map((r) => r.quiz_id));
   const quizzes = quizRows.results.map((r) => {
     const qs = JSON.parse(r.questions);
-    const cover = qs.findIndex((q) => q.image);
+    const first = qs.findIndex((q) => q.image); // no intro picture: use the first question's
     return {
       id: r.id, title: r.title, questions: qs.length, pins: qs.filter(isPin).length,
       updated: r.updated, plays: r.plays, lastPlayed: r.last_played, live: live.has(r.id),
-      cover: cover >= 0 ? imageUrl(r.id, r.v, cover) : null,
+      cover: r.cover ? imageUrl(r.id, r.v, COVER) : first >= 0 ? imageUrl(r.id, r.v, first) : null,
+      expires: Math.max(r.updated, r.last_played || 0) + QUIZ_TTL,
     };
   }).sort((a, b) => Math.max(b.updated, b.lastPlayed || 0) - Math.max(a.updated, a.lastPlayed || 0));
   const played = playedRows.results.map((e) => ({
@@ -252,7 +289,7 @@ async function handleApi(request, env, url, uid) {
     if (m) {
       const { quiz, error } = await ownQuiz(env, m[1], uid);
       if (error) return error;
-      return json({ id: quiz.id, title: quiz.title, v: quiz.v, questions: publicQuestions(quiz) });
+      return json({ id: quiz.id, title: quiz.title, v: quiz.v, cover: coverUrl(quiz), questions: publicQuestions(quiz) });
     }
     return fail("Not found", 404);
   }
@@ -283,11 +320,11 @@ async function createQuiz(env, uid, body) {
   const c = cleanQuiz(body);
   const id = token(8);
   const t = now();
-  await writeImages(env, id, c.images);
+  await writeImages(env, id, c.images, c.cover);
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO quizzes (id, owner, title, questions, v, created, updated, plays) VALUES (?, ?, ?, ?, 1, ?, ?, 0)",
-    ).bind(id, uid, c.title, JSON.stringify(c.questions), t, t),
+      "INSERT INTO quizzes (id, owner, title, questions, v, cover, created, updated, plays) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 0)",
+    ).bind(id, uid, c.title, JSON.stringify(c.questions), c.cover ? 1 : 0, t, t),
     upsertUser(env, uid),
   ]);
   return json({ id });
@@ -297,10 +334,10 @@ async function updateQuiz(env, uid, id, body) {
   const { quiz: old, error } = await ownQuiz(env, id, uid);
   if (error) return error;
   const c = cleanQuiz(body, id, old);
-  await writeImages(env, id, c.images);
+  await writeImages(env, id, c.images, c.cover);
   await env.DB.batch([
-    env.DB.prepare("UPDATE quizzes SET title = ?, questions = ?, v = v + 1, updated = ? WHERE id = ?")
-      .bind(c.title, JSON.stringify(c.questions), now(), id),
+    env.DB.prepare("UPDATE quizzes SET title = ?, questions = ?, cover = ?, v = v + 1, updated = ? WHERE id = ?")
+      .bind(c.title, JSON.stringify(c.questions), c.cover ? 1 : 0, now(), id),
     upsertUser(env, uid),
   ]);
   return json({ id });
@@ -343,7 +380,7 @@ async function host(env, uid, body) {
     if (!res.meta.changes) continue;
     await room(env, pin).init({
       pin, gid, token: tok, quizId: quiz.id, owner: uid, created: t,
-      quiz: { title: quiz.title, questions: publicQuestions(quiz) },
+      quiz: { title: quiz.title, cover: coverUrl(quiz), questions: publicQuestions(quiz) },
     });
     return json({ pin, token: tok });
   }
@@ -376,7 +413,7 @@ function ensureSchema(env) {
     env.DB.prepare(
       "CREATE TABLE IF NOT EXISTS quizzes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL, " +
       "questions TEXT NOT NULL, v INTEGER NOT NULL, created REAL NOT NULL, updated REAL NOT NULL, " +
-      "plays INTEGER NOT NULL DEFAULT 0, last_played REAL)",
+      "plays INTEGER NOT NULL DEFAULT 0, last_played REAL, cover INTEGER NOT NULL DEFAULT 0)",
     ),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_quizzes_owner ON quizzes(owner)"),
     env.DB.prepare(
@@ -393,10 +430,13 @@ function ensureSchema(env) {
       "owner TEXT NOT NULL, token TEXT NOT NULL, created REAL NOT NULL, done INTEGER NOT NULL DEFAULT 0)",
     ),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_games_quiz ON games(quiz_id, owner)"),
-  ]).catch((err) => {
-    schemaReady = null; // retry on the next request
-    throw err;
-  });
+  ])
+    // Databases made before intro pictures existed get the column added; "duplicate column" means it's already there.
+    .then(() => env.DB.prepare("ALTER TABLE quizzes ADD COLUMN cover INTEGER NOT NULL DEFAULT 0").run().catch(() => {}))
+    .catch((err) => {
+      schemaReady = null; // retry on the next request
+      throw err;
+    });
   return schemaReady;
 }
 
@@ -623,7 +663,7 @@ export class GameRoom extends DurableObject {
     const s = this.s;
     const board = this.board();
     const st = {
-      t: "state", phase: s.phase, pin: s.pin, quizTitle: s.quiz.title,
+      t: "state", phase: s.phase, pin: s.pin, quizTitle: s.quiz.title, cover: s.quiz.cover || null,
       qIndex: s.q, total: s.quiz.questions.length, count: board.length,
     };
     const live = s.phase === "question" || s.phase === "reveal";

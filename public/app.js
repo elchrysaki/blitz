@@ -134,6 +134,8 @@
     let alive = true;
     cleanup = () => { alive = false; };
 
+    // Quizzes nobody plays or edits for 15 days are deleted; warn in the last few days.
+    const daysLeft = (q) => (q.expires ? Math.max(1, Math.ceil((q.expires - Date.now() / 1000) / 86400)) : 99);
     const quizCard = (q) => `
       <article class="card qtile" data-id="${q.id}">
         <a class="cover" href="/host/${q.id}" data-link>
@@ -145,6 +147,7 @@
           <p class="meta">${q.questions} question${q.questions === 1 ? '' : 's'}${q.pins ? ` · ${q.pins} pin` : ''} · ${
             q.plays ? `played ${q.plays}×` : 'not played yet'}</p>
           <p class="meta dim">Edited ${ago(q.updated)}</p>
+          ${daysLeft(q) <= 5 ? `<p class="meta warn">Deleted in ${daysLeft(q) <= 1 ? 'a day' : `${daysLeft(q)} days`} unless it’s played</p>` : ''}
           <div class="qtile-actions">
             <a class="btn primary small" href="/host/${q.id}" data-link>${q.live ? 'Back to game' : 'Host'}</a>
             <a class="btn small" href="/edit/${q.id}" data-link>Edit</a>
@@ -286,6 +289,7 @@
   const fromSaved = (quiz) => ({
     v: quiz.v,
     title: quiz.title,
+    cover: quiz.cover || null,
     questions: quiz.questions.map((q) => (q.type === 'pin'
       ? { ...blankQuestion(), type: 'pin', title: q.title, image: q.image, regions: q.regions, time: q.time }
       : { ...blankQuestion(), title: q.title, image: q.image, answers: [...q.answers, '', '', ''].slice(0, 4), correct: q.correct, time: q.time })),
@@ -319,6 +323,7 @@
         <section class="create-head">
           <p class="eyebrow">${editId ? 'Editing quiz' : 'New quiz'}</p>
           <input class="title-input" id="title" maxlength="120" placeholder="Name your quiz" value="${esc(d.title)}" aria-label="Quiz title">
+          <div id="cover"></div>
         </section>
         <div id="questions"></div>
         <button class="add" id="add"><span>+</span> Add question</button>
@@ -372,6 +377,31 @@
     };
     const draw = () => { list.innerHTML = d.questions.map(card).join(''); };
     draw();
+
+    // The intro picture: shown in the lobby while players join, and on the dashboard tile.
+    const coverBox = $('#cover');
+    const drawCover = () => {
+      coverBox.innerHTML = d.cover
+        ? `<div class="drop has intro"><img src="${d.cover}" alt="">
+             <button class="ghost over" id="nocover">Remove intro picture</button></div>`
+        : `<label class="drop intro">
+             <input type="file" accept="image/*" hidden id="coverfile">
+             <span class="drop-hint"><b>Add an intro picture</b><small>Shown in the lobby while players join — optional</small></span>
+           </label>`;
+    };
+    const setCover = async (file) => {
+      if (!file || !file.type.startsWith('image/')) return;
+      try { d.cover = await shrink(file); } catch { return toast("Couldn't read that picture"); }
+      save(); drawCover();
+    };
+    drawCover();
+    coverBox.addEventListener('change', (e) => { if (e.target.id === 'coverfile') setCover(e.target.files[0]); });
+    coverBox.addEventListener('click', (e) => {
+      if (e.target.id !== 'nocover') return;
+      e.preventDefault(); d.cover = null; save(); drawCover();
+    });
+    coverBox.addEventListener('dragover', (e) => { if (e.target.closest('.drop')) e.preventDefault(); });
+    coverBox.addEventListener('drop', (e) => { e.preventDefault(); setCover(e.dataTransfer.files[0]); });
 
     const qOf = (el) => d.questions[+el.closest('[data-q]').dataset.q];
     const setImage = async (q, file) => {
@@ -454,7 +484,7 @@
     };
 
     $('#publish').onclick = async () => {
-      const payload = { title: d.title.trim(), questions: [] };
+      const payload = { title: d.title.trim(), cover: d.cover || null, questions: [] };
       if (!payload.title) { $('#title').focus(); return toast('Give your quiz a title'); }
       for (const [i, q] of d.questions.entries()) {
         const n = i + 1;
@@ -540,6 +570,7 @@
             <h1 class="display">${esc(quiz.title)}</h1>
             <p class="lede">This is what players will see. When it looks right, open the lobby to get your link and PIN.</p>
           </section>
+          ${quiz.cover ? `<figure class="intro-banner"><img src="${quiz.cover}" alt="" decoding="async"><figcaption>Intro · shown in the lobby</figcaption></figure>` : ''}
           ${quiz.questions.map((q, i) => `
             <section class="card pcard">
               <header><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="grow"></span>
@@ -573,6 +604,7 @@
         app.innerHTML = `
           <main class="page lobby">
             ${nav(`<span class="pill">${esc(s.quizTitle)}</span><button class="ghost" id="close">Close lobby</button>`)}
+            ${s.cover ? `<figure class="intro-banner"><img src="${s.cover}" alt="" decoding="async"><figcaption>${esc(s.quizTitle)}</figcaption></figure>` : ''}
             <section class="lobby-grid">
               <div class="card joinbox">
                 <p class="eyebrow">Join at <strong>${esc(origin.replace(/^https?:\/\//, ''))}</strong></p>
@@ -737,7 +769,8 @@
 
       if (s.phase === 'lobby') {
         return centered(`
-          <div class="avatar">${esc(s.name.slice(0, 1).toUpperCase())}</div>
+          ${s.cover ? `<img class="intro-img" src="${s.cover}" alt="" decoding="async">`
+            : `<div class="avatar">${esc(s.name.slice(0, 1).toUpperCase())}</div>`}
           <h1 class="display">You’re in, <em>${esc(s.name)}.</em></h1>
           <p class="lede">Eyes on the host’s screen — the game starts any second<span class="dots"></span></p>`);
       }

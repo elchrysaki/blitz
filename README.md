@@ -7,6 +7,8 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 - **Quiz:** a title, an optional picture and 2–4 answers. Mark the right one.
 - **Pin:** a title and a picture. Drag on the picture to mark one or more target areas. Players tap to drop a map-style pin, and pins that land inside an area score.
 
+Each quiz can also have an **intro picture**, added under the title in the editor. It's shown whole (never cropped) in the host's preview, in the lobby while players join, and on each player's waiting screen. It's also the quiz's cover on the dashboard; without one, the first question's picture is used.
+
 ## No accounts
 
 Each browser gets a private random cookie (`blitz_uid`, HttpOnly). Everything tied to it is kept for **7 days after your last visit**, and every visit adds another 7 days:
@@ -14,6 +16,7 @@ Each browser gets a private random cookie (`blitz_uid`, HttpOnly). Everything ti
 - **Dashboard** (`/dashboard`): your quizzes, with Host, Edit and Delete. Below them, the games you recently played, with your rank and score. If a game is still running, you get a **Rejoin** button.
 - Quizzes can only be edited, hosted or deleted from the browser that made them.
 - After 7 days without a visit, the server forgets that browser and deletes its quizzes.
+- **Quizzes nobody plays for 15 days are deleted** with their pictures, to save space. The 15 days count from the later of the last finished game and the last edit. A quiz with a game running right now is never deleted. In the last 5 days, the dashboard shows "Deleted in N days unless it's played".
 
 ## Online: Cloudflare
 
@@ -22,7 +25,7 @@ The live site runs on Cloudflare Workers (worker `blitz`):
 - **Worker** (`src/worker.js`): the `/api/*` routes. The files in `public/` are served as static assets, and app routes such as `/dashboard` fall back to `index.html`.
 - **Durable Object** `GameRoom`: one per game PIN. It holds the players, the question timer (an alarm) and the scores, and streams updates to every screen over server-sent events.
 - **D1** database `blitz-db`: quizzes, pictures, browsers (cookie IDs and last visit), play history and game PINs. The tables are created automatically on first use.
-- **Cron** (daily, 03:17 UTC): forgets browsers that haven't visited for 7 days, and removes old PINs.
+- **Cron** (daily, 03:17 UTC): forgets browsers that haven't visited for 7 days, deletes quizzes idle for 15 days, and removes old PINs. (Locally, `server.py` does the same at startup and then every hour.)
 
 Deploys happen through **Cloudflare Workers Builds**, which is connected to this GitHub repo. Every push to `main` runs `npx wrangler deploy`. To deploy by hand from a machine with Node.js:
 

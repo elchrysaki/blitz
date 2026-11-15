@@ -27,6 +27,8 @@ os.makedirs(QUIZZES, exist_ok=True)
 os.makedirs(USERS, exist_ok=True)
 
 WEEK = 7 * 24 * 3600
+QUIZ_TTL = 15 * 24 * 3600  # a quiz nobody has played or edited for 15 days is deleted
+COVER = 999                # picture slot for the quiz's intro picture
 COOKIE = "blitz_uid"
 MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
@@ -84,7 +86,20 @@ def clean_quiz(body, quiz_id=None, old=None):
             raise ValueError(f"Mark the correct answer for question {n}")
         questions.append({"type": "quiz", "title": qtitle, "answers": answers, "correct": correct,
                           "image": image, "time": limit})
-    return {"title": title, "questions": questions}
+    return {"title": title, "questions": questions, "cover": clean_cover(body.get("cover"), quiz_id, old)}
+
+
+def clean_cover(image, quiz_id, old):
+    """The quiz's intro picture: a new upload, "keep the one you have", or none."""
+    if not image:
+        return None
+    if isinstance(image, str):
+        if IMG_RE.match(image):
+            return image
+        m = KEEP_RE.match(image)
+        if m and old and m.group(1) == quiz_id and int(m.group(2)) == COVER and old.get("cover"):
+            return old["cover"]
+    raise ValueError("The intro picture isn't supported")
 
 
 def clean_image(image, quiz_id, old, n):
@@ -94,7 +109,7 @@ def clean_image(image, quiz_id, old, n):
         if IMG_RE.match(image):
             return image
         m = KEEP_RE.match(image)
-        if m and old and m.group(1) == quiz_id and int(m.group(2)) < len(old["questions"]):
+        if m and old and m.group(1) == quiz_id and int(m.group(2)) != COVER and int(m.group(2)) < len(old["questions"]):
             return old["questions"][int(m.group(2))].get("image")
     raise ValueError(f"Question {n} has an unsupported picture")
 
@@ -152,7 +167,21 @@ def delete_quiz(quiz_id):
 
 def image_url(quiz_id, quiz, i):
     # ?v= changes on every edit, so browsers never show a stale cached picture.
-    return f"/api/quizzes/{quiz_id}/image/{i}?v={quiz.get('v', 1)}" if quiz["questions"][i].get("image") else None
+    has = quiz.get("cover") if i == COVER else quiz["questions"][i].get("image")
+    return f"/api/quizzes/{quiz_id}/image/{i}?v={quiz.get('v', 1)}" if has else None
+
+
+def prune_quizzes():
+    """Delete quizzes nobody has played (or edited) for 15 days, unless a game of them is running."""
+    cutoff = time.time() - QUIZ_TTL
+    running = {g.quiz_id for g in GAMES.values() if g.phase != "final"}
+    for name in os.listdir(QUIZZES):
+        quiz_id = name[:-5]
+        if not name.endswith(".json") or quiz_id in running:
+            continue
+        quiz = load_quiz(quiz_id)
+        if quiz and max(quiz.get("updated", 0), quiz.get("lastPlayed") or 0) < cutoff:
+            delete_quiz(quiz_id)
 
 
 # ---------- people (one JSON file per browser cookie) ----------
@@ -321,6 +350,7 @@ class Game:
     def state(self, pid):
         board = self.board()
         s = {"t": "state", "phase": self.phase, "pin": self.pin, "quizTitle": self.quiz["title"],
+             "cover": image_url(self.quiz_id, self.quiz, COVER),
              "qIndex": self.q, "total": len(self.quiz["questions"]), "count": len(board)}
         live = self.phase in ("question", "reveal")
         if live:
@@ -376,6 +406,7 @@ def sweep():
     for g in [g for g in GAMES.values() if g.created < cutoff]:
         g.end()
     prune_users()
+    prune_quizzes()
 
 
 def live_game(quiz_id, owner):
@@ -473,7 +504,8 @@ class Handler(BaseHTTPRequestHandler):
                     quiz = self.own_quiz(m.group(1))
                 if quiz:
                     q = [dict(x, image=image_url(m.group(1), quiz, i)) for i, x in enumerate(quiz["questions"])]
-                    self.send_json(200, {"id": m.group(1), "title": quiz["title"], "v": quiz.get("v", 1), "questions": q})
+                    self.send_json(200, {"id": m.group(1), "title": quiz["title"], "v": quiz.get("v", 1),
+                                         "cover": image_url(m.group(1), quiz, COVER), "questions": q})
                 return
             if path.startswith("/api/"):
                 return self.fail(404, "Not found")
@@ -494,7 +526,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def get_image(self, quiz_id, i):
         quiz = load_quiz(quiz_id)
-        m = IMG_RE.match(quiz["questions"][i].get("image") or "") if quiz and i < len(quiz["questions"]) else None
+        src = None
+        if quiz and i == COVER:
+            src = quiz.get("cover")
+        elif quiz and i < len(quiz["questions"]):
+            src = quiz["questions"][i].get("image")
+        m = IMG_RE.match(src or "")
         if not m:
             return self.fail(404, "No picture")
         self.send_bytes(base64.b64decode(m.group(2)), "image/" + m.group(1), "public, max-age=31536000, immutable")
@@ -506,12 +543,14 @@ class Handler(BaseHTTPRequestHandler):
             quiz = load_quiz(quiz_id)
             if not quiz or quiz.get("owner") != self.uid:
                 continue
-            cover = next((i for i, q in enumerate(quiz["questions"]) if q.get("image")), None)
+            # The intro picture, or else the first question's picture.
+            cover = COVER if quiz.get("cover") else next((i for i, q in enumerate(quiz["questions"]) if q.get("image")), None)
             mine.append({"id": quiz_id, "title": quiz["title"], "questions": len(quiz["questions"]),
                          "pins": sum(is_pin(q) for q in quiz["questions"]),
                          "updated": quiz.get("updated", 0), "plays": quiz.get("plays", 0),
                          "lastPlayed": quiz.get("lastPlayed"), "live": bool(live_game(quiz_id, self.uid)),
-                         "cover": image_url(quiz_id, quiz, cover) if cover is not None else None})
+                         "cover": image_url(quiz_id, quiz, cover) if cover is not None else None,
+                         "expires": max(quiz.get("updated", 0), quiz.get("lastPlayed") or 0) + QUIZ_TTL})
         mine.sort(key=lambda q: -max(q["updated"], q["lastPlayed"] or 0))
         played = []
         for e in u["played"]:
@@ -687,8 +726,19 @@ class Server(ThreadingHTTPServer):
     request_queue_size = 128
 
 
+def housekeeping():
+    """Once an hour: forget idle browsers and delete quizzes idle for 15 days."""
+    while True:
+        time.sleep(3600)
+        with LOCK:
+            prune_users()
+            prune_quizzes()
+
+
 if __name__ == "__main__":
     prune_users()
+    prune_quizzes()
+    threading.Thread(target=housekeeping, daemon=True).start()
     print(f"Blitz is running:  http://localhost:{PORT}")
     if lan_url():
         print(f"On your network:   {lan_url()}")

@@ -177,6 +177,16 @@ input::placeholder { color: rgba(246, 241, 233, .28); }
 .drop-hint { display: grid; gap: 2px; text-align: center; }
 .drop-hint small { color: var(--mute); font-size: 14px; }
 .ghost.over { position: absolute; top: 12px; right: 12px; background: rgba(3, 42, 60, .65); color: var(--ink); }
+/* intro picture */
+.drop.intro { min-height: 120px; margin-top: 6px; }
+.drop.intro.has > img { max-height: 300px; object-fit: contain; }
+.intro-banner { position: relative; display: flex; justify-content: center; margin: 8px 0 28px; border-radius: 28px; overflow: hidden;
+  border: 1px solid var(--line); background: rgba(3, 42, 60, .7); animation: enter .3s var(--ease) both; }
+.intro-banner img { width: auto; max-width: 100%; max-height: 40vh; object-fit: contain; }  /* the whole picture, never cropped */
+.lobby .intro-banner img { max-height: 30vh; }
+.intro-banner figcaption { position: absolute; left: 14px; bottom: 14px; padding: 6px 14px; border-radius: 999px; background: rgba(3, 42, 60, .82); font: 700 15px var(--display); }
+.intro-img { width: auto; max-width: min(420px, 100%); max-height: 32vh; object-fit: contain; border-radius: 26px; border: 1px solid var(--line); animation: bounce .42s var(--ease) both; }
+.meta.warn { color: var(--vermilion-hi); font-weight: 600; }
 .answers-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ans { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 18px; background: rgba(246, 241, 233, .05); border: 1px solid var(--line); border-left: 4px solid var(--tone); transition: background .2s; }
 .ans:focus-within { background: rgba(246, 241, 233, .09); }
