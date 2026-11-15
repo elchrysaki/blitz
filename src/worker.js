@@ -194,9 +194,10 @@ async function prune(env) {
 
 async function getMe(env, uid) {
   const t = now();
-  const user = await env.DB.prepare("SELECT seen FROM users WHERE uid = ?").bind(uid).first();
-  if (user && user.seen < t - WEEK) await forget(env, uid); // not seen for 7 days: forget them
-  const [quizRows, liveRows, playedRows] = await env.DB.batch([
+  // One round trip to D1: read the last visit, the quizzes, live games and history,
+  // and (only if this browser has anything) extend its 7 days.
+  const [userRows, quizRows, liveRows, playedRows] = await env.DB.batch([
+    env.DB.prepare("SELECT seen FROM users WHERE uid = ?").bind(uid),
     env.DB.prepare("SELECT id, title, questions, v, updated, plays, last_played FROM quizzes WHERE owner = ?").bind(uid),
     env.DB.prepare("SELECT quiz_id FROM games WHERE owner = ? AND done = 0 AND created > ?").bind(uid, t - GAME_TTL),
     env.DB.prepare(
@@ -205,6 +206,11 @@ async function getMe(env, uid) {
       "WHERE p.uid = ? AND p.at > ? ORDER BY p.at DESC LIMIT 30",
     ).bind(t - GAME_TTL, uid, t - WEEK),
   ]);
+  const user = userRows.results[0];
+  if (user && user.seen < t - WEEK) { // not seen for 7 days: forget them
+    await forget(env, uid);
+    return json({ quizzes: [], played: [], expires: null });
+  }
   const live = new Set(liveRows.results.map((r) => r.quiz_id));
   const quizzes = quizRows.results.map((r) => {
     const qs = JSON.parse(r.questions);
@@ -220,7 +226,8 @@ async function getMe(env, uid) {
     rank: e.place, count: e.players, done: !!e.done, live: !!e.live_gid,
   }));
   const any = quizzes.length > 0 || played.length > 0;
-  if (any) await upsertUser(env, uid).run(); // visiting the dashboard keeps everything for another 7 days
+  // Visiting the dashboard keeps everything for another 7 days. Skip the write if it was refreshed in the last hour.
+  if (any && !(user && user.seen > t - 3600)) await upsertUser(env, uid).run();
   return json({ quizzes, played, expires: any ? t + WEEK : null });
 }
 

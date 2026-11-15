@@ -30,6 +30,13 @@ Deploys happen through **Cloudflare Workers Builds**, which is connected to this
 npm install && npx wrangler deploy
 ```
 
+## Speed
+
+- **No continuous effects.** The background glow is a static gradient, cards don't blur what's behind them, and the countdown ticker only runs while a timer is on screen and the tab is visible. Idle pages use almost no CPU or GPU. People with reduced motion turned on get no animations.
+- **Service worker** (`public/sw.js`). It serves the page, script and styles from the browser's cache at once, then quietly fetches fresh copies for next time, so after a deploy each browser picks up the new version on its second visit. Quiz pictures are cached for good, since their URLs change whenever a picture changes. Live game data is never cached.
+- **Dashboard** draws instantly from the last copy saved in `localStorage` (`blitz:me`), then refreshes from the server.
+- **Server.** The dashboard needs one D1 round trip, and Smart Placement runs the Worker near the database.
+
 ## Run it locally
 
 Needs only Python 3.9+ (standard library, nothing to install):

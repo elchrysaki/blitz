@@ -14,7 +14,7 @@
   const regionEl = (r, i, del) => `<div class="region" style="left:${pct(r.x)};top:${pct(r.y)};width:${pct(r.w)};height:${pct(r.h)}">${
     del ? `<button class="rdel" data-act="rdel" data-r="${i}" aria-label="Remove area">×</button>` : ''}</div>`;
   const marker = (x, y, cls = '', title = '') => `<span class="marker ${cls}" style="left:${pct(x)};top:${pct(y)}"${title ? ` title="${esc(title)}"` : ''}>${PIN}</span>`;
-  const pinBox = (src, inner = '', cls = '') => `<div class="pinbox ${cls}"><img src="${src}" alt="" draggable="false">${inner}</div>`;
+  const pinBox = (src, inner = '', cls = '') => `<div class="pinbox ${cls}"><img src="${src}" alt="" draggable="false" decoding="async">${inner}</div>`;
   const fracAt = (box, e) => { const b = box.getBoundingClientRect(); return [clamp((e.clientX - b.left) / b.width), clamp((e.clientY - b.top) / b.height)]; };
 
   let cleanup = null;      // tears down the current view's live connection
@@ -55,12 +55,21 @@
     return () => es.close();
   }
 
-  // One ticker drives every countdown on screen.
-  setInterval(() => {
+  // One ticker drives every countdown on screen. It only runs while a countdown is visible
+  // and the tab is in front, so idle pages cost nothing.
+  let ticking = 0;
+  function tick() {
+    ticking = 0;
+    const secs = document.querySelectorAll('[data-secs]');
+    const bars = document.querySelectorAll('[data-bar]');
+    if (!secs.length && !bars.length) return;
     const left = Math.max(0, deadline - performance.now());
-    document.querySelectorAll('[data-secs]').forEach((el) => { el.textContent = Math.ceil(left / 1000); });
-    document.querySelectorAll('[data-bar]').forEach((el) => { el.style.transform = `scaleX(${left / duration})`; });
-  }, 100);
+    secs.forEach((el) => { const v = String(Math.ceil(left / 1000)); if (el.textContent !== v) el.textContent = v; });
+    bars.forEach((el) => { el.style.transform = `scaleX(${left / duration})`; });
+    if (left > 0 && !document.hidden) ticking = setTimeout(tick, 100);
+  }
+  const startTicker = () => { if (!ticking) tick(); };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) startTicker(); });
 
   const nav = (right = '') => `
     <header class="nav">
@@ -119,16 +128,11 @@
   async function viewDashboard() {
     let alive = true;
     cleanup = () => { alive = false; };
-    app.innerHTML = `<main class="page dash">${nav('<a class="btn primary small" href="/create" data-link>New quiz</a>')}
-      <div class="solo"><p class="lede">Loading<span class="dots"></span></p></div></main>`;
-    let me;
-    try { me = await api('/api/me'); } catch (err) { if (alive) toast(err.message); return; }
-    if (!alive) return;
 
     const quizCard = (q) => `
       <article class="card qtile" data-id="${q.id}">
         <a class="cover" href="/host/${q.id}" data-link>
-          ${q.cover ? `<img src="${q.cover}" alt="" loading="lazy">` : `<span class="cover-fallback">${esc(q.title.slice(0, 1).toUpperCase())}</span>`}
+          ${q.cover ? `<img src="${q.cover}" alt="" loading="lazy" decoding="async">` : `<span class="cover-fallback">${esc(q.title.slice(0, 1).toUpperCase())}</span>`}
           ${q.live ? '<span class="livebadge">Live now</span>' : ''}
         </a>
         <div class="qtile-body">
@@ -154,6 +158,29 @@
           : '<span class="pscore dim">Left early</span>'}
       </li>`;
 
+    // Draw at once from the last copy this browser saw, then refresh from the server.
+    const CACHE = 'blitz:me';
+    let shown = '';
+    const paint = (me) => {
+      const key = JSON.stringify(me);
+      if (key === shown) return;
+      const repaint = !!shown;
+      shown = key;
+      drawDashboard(me, quizCard, playedRow);
+      if (repaint) app.firstElementChild.style.animation = 'none'; // quiet update, no second entrance
+    };
+    const cached = store.get(CACHE, localStorage);
+    if (cached) paint(cached);
+    else app.innerHTML = `<main class="page dash">${nav('<a class="btn primary small" href="/create" data-link>New quiz</a>')}
+      <div class="solo"><p class="lede">Loading<span class="dots"></span></p></div></main>`;
+    try {
+      const me = await api('/api/me');
+      store.set(CACHE, me, localStorage);
+      if (alive) paint(me);
+    } catch (err) { if (alive && !cached) toast(err.message); }
+  }
+
+  function drawDashboard(me, quizCard, playedRow) {
     app.innerHTML = `
       <main class="page dash">
         ${nav('<a class="btn primary small" href="/create" data-link>New quiz</a>')}
@@ -184,6 +211,8 @@
         try {
           await api(`/api/quizzes/${b.dataset.del}/delete`, {});
           store.del(`blitz:draft:${b.dataset.del}`, localStorage);
+          const c = store.get('blitz:me', localStorage);
+          if (c) store.set('blitz:me', { ...c, quizzes: c.quizzes.filter((q) => q.id !== b.dataset.del) }, localStorage);
           card.remove();
           toast('Quiz deleted');
         } catch (err) { toast(err.message); }
@@ -513,7 +542,7 @@
               <h2>${esc(q.title)}</h2>
               ${q.type === 'pin'
                 ? `${pinBox(q.image, q.regions.map((r) => regionEl(r)).join(''))}<p class="hint">Pins inside the highlighted area${q.regions.length > 1 ? 's' : ''} score.</p>`
-                : `${q.image ? `<img class="qimg" src="${q.image}" alt="">` : ''}
+                : `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
                    ${tiles(q.answers, (k) => (k === q.correct ? { cls: 'right', extra: '<em>✓ Correct</em>' } : { cls: 'soft' }))}`}
             </section>`).join('')}
           <div class="cta end"><button class="btn primary" id="open2">Open lobby →</button></div>
@@ -524,7 +553,7 @@
     function renderHost(s, session) {
       if (!alive) return;
       s.token = session.token;
-      if (s.phase === 'question') { duration = s.question.time * 1000; deadline = performance.now() + s.remaining; }
+      if (s.phase === 'question') { duration = s.question.time * 1000; deadline = performance.now() + s.remaining; queueMicrotask(startTicker); }
       const key2 = `host:${s.phase}:${s.qIndex}`;
 
       if (key2 === viewKey) {                       // same screen: patch the live bits only
@@ -578,7 +607,7 @@
               ? s.regions.map((r) => regionEl(r)).join('') + s.pins.map((p) => marker(p.x, p.y, `small drop-in ${p.ok ? 'ok' : 'miss'}`, p.name)).join('')
               : '')}
              ${reveal ? `<p class="pinstat"><strong>${s.hits}</strong> of ${s.count} landed inside</p>` : ''}`
-          : q.image ? `<img class="qimg" src="${q.image}" alt="">` : '';
+          : q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : '';
         app.innerHTML = `
           <main class="page stage ${reveal ? 'is-reveal' : ''} ${pin ? 'pinq' : ''}">
             <div class="timerbar"><i data-bar ${reveal ? 'style="transform:scaleX(0)"' : ''}></i></div>
@@ -694,7 +723,7 @@
 
     function renderPlayer(s, session) {
       if (!alive) return;
-      if (s.phase === 'question') { duration = s.question.time * 1000; deadline = performance.now() + s.remaining; }
+      if (s.phase === 'question') { duration = s.question.time * 1000; deadline = performance.now() + s.remaining; queueMicrotask(startTicker); }
       const key = `play:${s.phase}:${s.qIndex}:${s.choice}`;
       if (key === viewKey) return;
       viewKey = key;
@@ -759,7 +788,7 @@
             </header>
             <section class="qwrap"><div class="qmain">
               <h1 class="qtitle">${esc(q.title)}</h1>
-              ${q.image ? `<img class="qimg" src="${q.image}" alt="">` : ''}
+              ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
             </div></section>
             ${tiles(q.answers, () => ({ button: true }))}
           </main>`;

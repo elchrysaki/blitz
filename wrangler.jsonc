@@ -22,5 +22,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
   // Once a day: forget browsers that haven't visited for 7 days, and clear old game PINs.
   "triggers": { "crons": ["17 3 * * *"] },
+  // Run the Worker close to the D1 database, so the several queries behind one request don't each cross the globe.
+  "placement": { "mode": "smart" },
   "observability": { "enabled": true }
 }

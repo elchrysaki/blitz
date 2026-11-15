@@ -3,7 +3,7 @@
   --ink: #f5f5f7;
   --mute: #9a9aa3;
   --line: rgba(255, 255, 255, .1);
-  --glass: rgba(255, 255, 255, .055);
+  --glass: rgba(255, 255, 255, .06);
   --lime: #d4ff3f;
   --a: #8b6cff;
   --b: #ff5c93;
@@ -37,12 +37,13 @@ em { font-family: var(--serif); font-style: italic; font-weight: 400; color: var
 .grow { flex: 1; }
 
 /* ---------- ambient background ---------- */
-.aurora { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
-.aurora i { position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%; filter: blur(110px); opacity: .22; animation: drift 26s var(--ease) infinite alternate; }
-.aurora i:nth-child(1) { background: var(--a); top: -30vmax; left: -18vmax; }
-.aurora i:nth-child(2) { background: var(--lime); bottom: -40vmax; right: -22vmax; opacity: .12; animation-duration: 34s; animation-direction: alternate-reverse; }
-.aurora i:nth-child(3) { background: var(--b); top: 30%; left: 55%; width: 34vmax; height: 34vmax; opacity: .1; animation-duration: 40s; }
-@keyframes drift { to { transform: translate3d(9vmax, 6vmax, 0) scale(1.15); } }
+/* Static glow: painted once, never animated or blurred (blur + animation kept the GPU busy on every frame). */
+.aurora { position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60vmax 60vmax at 12% -8%, rgba(139, 108, 255, .2), transparent 60%),
+    radial-gradient(60vmax 60vmax at 95% 108%, rgba(212, 255, 63, .09), transparent 60%),
+    radial-gradient(34vmax 34vmax at 72% 48%, rgba(255, 92, 147, .07), transparent 60%); }
+.aurora i { display: none; }
 
 /* ---------- layout ---------- */
 .page { width: min(1120px, 100%); margin: 0 auto; padding: 0 24px 96px; animation: enter .6s var(--ease) both; }
@@ -66,7 +67,7 @@ em { font-family: var(--serif); font-style: italic; font-weight: 400; color: var
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   height: 54px; padding: 0 26px; border-radius: 999px; font-weight: 600; white-space: nowrap;
-  background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(20px);
+  background: var(--glass); border: 1px solid var(--line);
   transition: transform .25s var(--ease), background .25s, opacity .25s;
 }
 .btn:hover { background: rgba(255, 255, 255, .11); transform: translateY(-1px); }
@@ -80,7 +81,7 @@ em { font-family: var(--serif); font-style: italic; font-weight: 400; color: var
 .pill { display: inline-flex; align-items: center; height: 36px; padding: 0 14px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); font-size: 14px; font-weight: 600; white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .pill.dim { color: var(--mute); }
 .pill.score-pill { color: var(--lime); }
-.card { background: var(--glass); border: 1px solid var(--line); border-radius: 28px; backdrop-filter: blur(24px); }
+.card { background: var(--glass); border: 1px solid var(--line); border-radius: 28px; }
 input::placeholder { color: rgba(255, 255, 255, .28); }
 
 .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
@@ -99,7 +100,7 @@ input::placeholder { color: rgba(255, 255, 255, .28); }
 /* ---------- home ---------- */
 .hero { padding: clamp(32px, 7vh, 88px) 0 64px; display: grid; gap: 28px; }
 .hero .mega em { letter-spacing: -.05em; }
-.pinform { display: flex; height: 54px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); padding: 5px; backdrop-filter: blur(20px); }
+.pinform { display: flex; height: 54px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); padding: 5px; }
 .pinform input { background: none; border: 0; outline: 0; width: 132px; padding: 0 16px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .08em; }
 .pinform .btn { height: 42px; padding: 0 20px; background: rgba(255, 255, 255, .12); border: 0; }
 .steps { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }
@@ -126,7 +127,7 @@ input::placeholder { color: rgba(255, 255, 255, .28); }
 .drop > img { width: 100%; max-height: 380px; object-fit: contain; }
 .drop-hint { display: grid; gap: 2px; text-align: center; }
 .drop-hint small { color: var(--mute); font-size: 14px; }
-.ghost.over { position: absolute; top: 12px; right: 12px; background: rgba(0, 0, 0, .65); color: #fff; backdrop-filter: blur(12px); }
+.ghost.over { position: absolute; top: 12px; right: 12px; background: rgba(0, 0, 0, .65); color: #fff; }
 .answers-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ans { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 18px; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-left: 4px solid var(--tone); transition: background .2s; }
 .ans:focus-within { background: rgba(255, 255, 255, .09); }
@@ -324,4 +325,9 @@ button.tile:active { transform: scale(.97); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* Less motion for people who ask for it (and for laptops in low-power mode that set it). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
 }

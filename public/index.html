@@ -6,12 +6,22 @@
   <meta name="theme-color" content="#08080a">
   <title>Blitz — live quizzes</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23d4ff3f'/%3E%3Cpath d='M18 5 9 18h6l-1 9 9-13h-6z' fill='%2308080a'/%3E%3C/svg%3E">
+  <link rel="preload" href="/app.js" as="script">
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    /* Paints before the stylesheet or script arrive, so the screen is never blank white. */
+    html, body { background: #08080a; color: #f5f5f7; }
+    .boot { min-height: 100vh; display: grid; place-items: center; font: 700 28px/1 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; letter-spacing: -.05em; }
+    .boot i { color: #d4ff3f; font-style: normal; }
+  </style>
+  <script defer src="/app.js"></script>
 </head>
 <body>
-  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
-  <div id="app"></div>
+  <div class="aurora" aria-hidden="true"></div>
+  <div id="app"><div class="boot">blitz<i>.</i></div></div>
   <div id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  </script>
 </body>
 </html>
