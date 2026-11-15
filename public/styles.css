@@ -112,9 +112,6 @@ input::selection, textarea::selection { background: var(--accent); color: var(--
   background: rgba(6, 66, 92, .92); backdrop-filter: blur(24px) saturate(140%); -webkit-backdrop-filter: blur(24px) saturate(160%);
 }
 .logo { display: inline-flex; align-items: center; gap: 9px; font: 800 24px/1 var(--display); letter-spacing: -.03em; }
-.logo-mark { width: 34px; height: 34px; flex: none; transition: transform .35s var(--ease); }
-@media (hover: hover) and (pointer: fine) { .logo:hover .logo-mark { transform: rotate(-8deg) scale(1.06); } }
-.logo:active .logo-mark { transform: scale(.94); }
 .logo i { color: var(--accent); font-style: normal; }
 
 .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--vermilion-hi); }  /* lighter orange: small text needs the extra contrast */
@@ -413,7 +410,6 @@ button.tile:active { transform: scale(.97); }
   .qcard, .pcard { padding: 20px; border-radius: 24px; }
   .lobby-grid { grid-template-columns: 1fr; gap: 28px; padding-top: 12px; }
   .joinbox { position: static; }
-  .nav:has(.pill) .logo span { display: none; }  /* in a game the bar holds your name and score: keep just the mark */
   .nav .btn.small { padding: 0 14px; }
   .crowd { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
   .buddy-art { width: 70px; height: 84px; }
@@ -463,12 +459,12 @@ button.tile:active { transform: scale(.97); }
   .nav { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 
-/* Small phones: the bar keeps just the mark, and long button labels drop their extra words */
+/* Small phones: a smaller wordmark, and long button labels drop their extra words */
 @media (max-width: 480px) {
-  .logo span { display: none; }
+  .logo { font-size: 21px; }
   .navlink { margin-left: 2px; }
   .hide-sm { display: none; }
-  .nav:has(.btn ~ .btn) .navlink { display: none; }  /* two actions in the bar: the logo still leads home */
+  .nav:has(.btn ~ .btn) .navlink, .nav:has(.pill) .navlink { display: none; }  /* a busy bar (two actions, or a game): the logo still leads home */
 }
 
 /* ---------- nav links: plain text, no boxes ----------
