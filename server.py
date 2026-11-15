@@ -7,6 +7,7 @@ and every visit pushes that window forward again.
 """
 import base64
 import json
+import math
 import os
 import queue
 import re
@@ -75,6 +76,15 @@ def clean_quiz(body, quiz_id=None, old=None):
             questions.append({"type": "pin", "title": qtitle, "image": image,
                               "regions": clean_regions(q.get("regions"), n), "time": limit})
             continue
+        if q.get("type") == "tf":
+            if q.get("correct") not in (0, 1) or isinstance(q.get("correct"), bool):
+                raise ValueError(f"Question {n}: pick True or False")
+            questions.append({"type": "tf", "title": qtitle, "answers": ["True", "False"], "correct": q["correct"],
+                              "image": image, "time": limit})
+            continue
+        if q.get("type") == "slider":
+            questions.append(dict({"type": "slider", "title": qtitle, "image": image, "time": limit}, **clean_slider(q, n)))
+            continue
         answers = q.get("answers")
         if not isinstance(answers, list):
             raise ValueError(f"Question {n} needs answers")
@@ -112,6 +122,48 @@ def clean_image(image, quiz_id, old, n):
         if m and old and m.group(1) == quiz_id and int(m.group(2)) != COVER and int(m.group(2)) < len(old["questions"]):
             return old["questions"][int(m.group(2))].get("image")
     raise ValueError(f"Question {n} has an unsupported picture")
+
+
+# Slider questions: a range, a step, the right value, an optional unit, and how close counts.
+MARGINS = {"exact": 0, "low": 0.05, "medium": 0.1, "high": 0.2}  # share of the range
+
+
+def snap(v, q):
+    return round(round((v - q["min"]) / q["step"]) * q["step"] + q["min"], 6)
+
+
+def clean_slider(q, n):
+    def num(v):
+        if isinstance(v, bool):
+            return float("nan")
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float("nan")
+    lo, hi, step, answer = (num(q.get(k)) for k in ("min", "max", "step", "answer"))
+    if not all(math.isfinite(v) and abs(v) <= 1e9 for v in (lo, hi, step, answer)):
+        raise ValueError(f"Question {n}: fill in the slider numbers")
+    if lo >= hi:
+        raise ValueError(f"Question {n}: the slider's lowest value must be below its highest")
+    if step <= 0 or (hi - lo) / step > 100000:
+        raise ValueError(f"Question {n}: pick a bigger slider step")
+    if not lo <= answer <= hi:
+        raise ValueError(f"Question {n}: the right value must be inside the range")
+    margin = q.get("margin") if q.get("margin") in MARGINS else "medium"
+    sl = {"min": lo, "max": hi, "step": step, "margin": margin, "unit": str(q.get("unit") or "").strip()[:12]}
+    sl["answer"] = snap(answer, sl)
+    return sl
+
+
+def slider_share(q, v):
+    """1 for a spot-on guess; inside the margin, from 1 down to 0.5 at its edge; 0 outside it."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return 0
+    dist = abs(v - q["answer"])
+    if dist < 1e-9:
+        return 1
+    tol = MARGINS[q["margin"]] * (q["max"] - q["min"])
+    return 1 - 0.5 * dist / tol if tol and dist <= tol + 1e-9 else 0
 
 
 def clean_regions(regions, n):
@@ -156,6 +208,8 @@ def is_right(q, choice):
         return False
     if is_pin(q):
         return areas_found(q, choice) == len(q["regions"])
+    if q.get("type") == "slider":
+        return slider_share(q, choice) > 0
     return choice == q["correct"]
 
 
@@ -320,6 +374,11 @@ class Game:
                     return
                 pts.append([round(x, 4), round(y, 4)])
             choice = pts
+        elif q.get("type") == "slider":
+            if isinstance(choice, bool) or not isinstance(choice, (int, float)) or not math.isfinite(choice) \
+                    or not q["min"] <= choice <= q["max"]:
+                return
+            choice = snap(choice, q)
         elif isinstance(choice, bool) or not isinstance(choice, int) or not 0 <= choice < len(q["answers"]):
             return
         p["choice"], p["ms"] = choice, (time.time() - self.started) * 1000
@@ -338,6 +397,8 @@ class Game:
             if is_pin(q):
                 p["found"] = 0 if p["choice"] is None else areas_found(q, p["choice"])
                 share = p["found"] / len(q["regions"])
+            elif q.get("type") == "slider":
+                share = slider_share(q, p["choice"])
             else:
                 share = 1 if p["right"] else 0
             if share > 0:
@@ -372,11 +433,13 @@ class Game:
 
     def question(self):
         q = self.quiz["questions"][self.q]
-        out = {"type": "pin" if is_pin(q) else "quiz", "title": q["title"],
+        out = {"type": q.get("type") if q.get("type") in ("tf", "slider") else "pin" if is_pin(q) else "quiz", "title": q["title"],
                "answers": q.get("answers", []), "time": q["time"],
                "image": image_url(self.quiz_id, self.quiz, self.q)}
         if is_pin(q):
             out["maxPins"] = len(q["regions"])  # how many pins a player may drop (one per area)
+        if q.get("type") == "slider":
+            out.update({k: q[k] for k in ("min", "max", "step", "unit")})
         return out
 
     def state(self, pid):
@@ -392,6 +455,9 @@ class Game:
             if self.phase == "reveal":
                 if is_pin(q):
                     s["regions"] = q["regions"]
+                elif q.get("type") == "slider":
+                    s["correct"] = q["answer"]
+                    s["tolerance"] = MARGINS[q["margin"]] * (q["max"] - q["min"])
                 else:
                     s["correct"] = q["correct"]
         if pid is None:
@@ -404,6 +470,10 @@ class Game:
                     if is_pin(q):
                         s["pins"] = [{"x": pt[0], "y": pt[1], "ok": any(in_region(r, pt) for r in q["regions"]), "name": p["name"]}
                                      for p in self.players.values() if p["choice"] is not None for pt in pins_of(p["choice"])]
+                        s["hits"] = sum(p["right"] for p in self.players.values())
+                    elif q.get("type") == "slider":
+                        s["guesses"] = [{"name": p["name"], "v": p["choice"], "ok": p["right"]}
+                                        for p in self.players.values() if p["choice"] is not None]
                         s["hits"] = sum(p["right"] for p in self.players.values())
                     else:
                         s["counts"] = [picks.count(i) for i in range(len(s["question"]["answers"]))]

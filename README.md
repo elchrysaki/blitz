@@ -5,6 +5,8 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 ## Question types
 
 - **Quiz:** a title, an optional picture and 2–4 answers. Mark the right one.
+- **True / False:** a title, an optional picture, and two big answers (✓ True, ✕ False). Mark the right one.
+- **Slider:** a title, an optional picture, a range (from / to), the right value, an optional unit, the step size, and how close counts (exact, ±5%, ±10% or ±20% of the range). Players drag to their guess. A spot-on guess scores full points; inside the margin, the closer the better (from full down to half at the edge); outside it, nothing. The reveal shows every guess on a number line.
 - **Pin:** a title and a picture. Drag on the picture to mark one or more target areas. Players drop map-style pins, up to one per area (tap a pin to remove it). A pin in every area scores full points; each area found earns its share, so finding 2 of 3 areas earns two thirds.
 
 **Lobby characters:** every player gets an original big-head character in an old-school 3D, 2000s-diva style, drawn by the app as SVG. Each player gets a random character when they join; the server picks it, so the host and the player see the same one. The host's lobby shows them as a grid that players hop into as they join, and each player sees their own character while waiting.

@@ -214,13 +214,16 @@
       <span class="grow"></span>${right}
     </header>`;
 
-  const tiles = (answers, each = () => ({})) => `
-    <div class="tiles">${answers.map((a, i) => {
+  // Answer tiles. True/False tiles are turquoise ✓ True and vermilion ✕ False instead of A–D.
+  const tiles = (answers, each = () => ({}), kind = 'quiz') => `
+    <div class="tiles ${kind === 'tf' ? 'tf' : ''}">${answers.map((a, i) => {
       const o = each(i);
       const tag = o.button ? 'button' : 'div';
-      return `<${tag} class="tile t${i} ${o.cls || ''}" ${o.button ? `data-choice="${i}"` : ''}>
-        <b>${L[i]}</b><span>${esc(a)}</span>${o.extra || ''}</${tag}>`;
+      const tone = kind === 'tf' ? (i ? 't0' : 't1') : `t${i}`;
+      return `<${tag} class="tile ${tone} ${o.cls || ''}" ${o.button ? `data-choice="${i}"` : ''}>
+        <b>${kind === 'tf' ? (i ? '✕' : '✓') : L[i]}</b><span>${esc(a)}</span>${o.extra || ''}</${tag}>`;
     }).join('')}</div>`;
+  const TYPE_LABEL = { quiz: 'Quiz', tf: 'True / False', slider: 'Slider', pin: 'Pin' };
 
   const boardRows = (players, limit) => players.slice(0, limit).map((p, i) => `
     <li><span class="rank">${i + 1}</span><span class="name">${esc(p.name)}</span>
@@ -469,7 +472,28 @@
 
   // ---------- create ----------
 
-  const blankQuestion = () => ({ type: 'quiz', title: '', image: null, answers: ['', '', '', ''], correct: 0, regions: [], time: 20 });
+  const blankQuestion = () => ({ type: 'quiz', title: '', image: null, answers: ['', '', '', ''], correct: 0, regions: [], time: 20,
+    min: 0, max: 100, step: 1, answer: 50, unit: '', margin: 'medium' });
+  const TYPES = [['quiz', 'Quiz'], ['tf', 'True/False'], ['slider', 'Slider'], ['pin', 'Pin']];
+  const MARGIN_LABELS = [['exact', 'Exact'], ['low', '±5%'], ['medium', '±10%'], ['high', '±20%']];  // of the range
+  const MARGIN_SHARE = { exact: 0, low: 0.05, medium: 0.1, high: 0.2 };
+  const STEPS = [0.01, 0.1, 0.5, 1, 5, 10, 100];
+  const numFmt = (v) => Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const withUnit = (v, unit) => `${numFmt(v)}${unit ? ` ${unit}` : ''}`;
+  // A number line: the range, a highlighted "close enough" band, the right value, and optional dots for guesses.
+  const numberLine = (q, { answer, tolerance = 0, guesses = [], you = null } = {}) => {
+    const at = (v) => `${((v - q.min) / (q.max - q.min)) * 100}%`;
+    const band = answer !== undefined && tolerance > 0
+      ? `<i class="nl-band" style="left:${at(Math.max(q.min, answer - tolerance))};right:calc(100% - ${at(Math.min(q.max, answer + tolerance))})"></i>` : '';
+    return `<div class="numline">
+      <div class="nl-track">${band}
+        ${guesses.map((g) => `<i class="nl-dot ${g.ok ? 'ok' : ''}" style="left:${at(g.v)}" title="${esc(g.name)}: ${esc(withUnit(g.v, q.unit))}"></i>`).join('')}
+        ${you !== null ? `<i class="nl-you" style="left:${at(you)}"></i>` : ''}
+        ${answer !== undefined ? `<i class="nl-answer" style="left:${at(answer)}"><span>${esc(withUnit(answer, q.unit))}</span></i>` : ''}
+      </div>
+      <div class="nl-ends"><span>${esc(withUnit(q.min, q.unit))}</span><span>${esc(withUnit(q.max, q.unit))}</span></div>
+    </div>`;
+  };
 
   function shrink(file) {
     return new Promise((resolve, reject) => {
@@ -499,6 +523,9 @@
     cover: quiz.cover || null,
     questions: quiz.questions.map((q) => (q.type === 'pin'
       ? { ...blankQuestion(), type: 'pin', title: q.title, image: q.image, regions: q.regions, time: q.time }
+      : q.type === 'tf' ? { ...blankQuestion(), type: 'tf', title: q.title, image: q.image, correct: q.correct, time: q.time }
+      : q.type === 'slider' ? { ...blankQuestion(), type: 'slider', title: q.title, image: q.image, time: q.time,
+        min: q.min, max: q.max, step: q.step, answer: q.answer, unit: q.unit || '', margin: q.margin }
       : { ...blankQuestion(), title: q.title, image: q.image, answers: [...q.answers, '', '', ''].slice(0, 4), correct: q.correct, time: q.time })),
   });
 
@@ -554,8 +581,7 @@
         <header>
           <span class="num">${String(i + 1).padStart(2, '0')}</span>
           <div class="seg" role="group" aria-label="Question type">
-            <button data-act="type" data-type="quiz" class="${pin ? '' : 'on'}" aria-pressed="${!pin}">Quiz</button>
-            <button data-act="type" data-type="pin" class="${pin ? 'on' : ''}" aria-pressed="${pin}">Pin</button>
+            ${TYPES.map(([t, label]) => `<button data-act="type" data-type="${t}" class="${q.type === t ? 'on' : ''}" aria-pressed="${q.type === t}">${label}</button>`).join('')}
           </div>
           <span class="grow"></span>
           <label class="select"><span class="select-label">Time</span>
@@ -563,12 +589,27 @@
           </label>
           ${d.questions.length > 1 ? '<button class="ghost" data-act="del" aria-label="Remove question">Remove</button>' : ''}
         </header>
-        <input class="q-input" data-f="title" maxlength="200" placeholder="${pin ? 'e.g. Tap the ugliest part of this UI' : 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
+        <input class="q-input" data-f="title" maxlength="200" placeholder="${{ pin: 'e.g. Tap the ugliest part of this UI', tf: 'e.g. The Moon has its own light', slider: 'e.g. How tall is the Eiffel Tower?' }[q.type] || 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
         ${picture}
         ${pin ? `<div class="pinrow"><p class="hint">${!q.image ? 'Add a picture, then drag on it to mark the right area.'
           : regions.length ? `${regions.length} area${regions.length === 1 ? '' : 's'} marked — players get ${regions.length} pin${regions.length === 1 ? '' : 's'} and need one in every area for full points. Drag to add more.`
           : 'Drag on the picture to mark the right area. You can mark several.'}</p>
-          ${q.image ? '<button class="ghost" data-act="noimg">Remove picture</button>' : ''}</div>` : `
+          ${q.image ? '<button class="ghost" data-act="noimg">Remove picture</button>' : ''}</div>` : q.type === 'tf' ? `
+        <div class="tf-edit" role="group" aria-label="The right answer">
+          ${['True', 'False'].map((label, k) => `<button class="tf-pick ${k ? 'is-false' : 'is-true'} ${q.correct === k ? 'on' : ''}" data-act="tf" data-v="${k}" aria-pressed="${q.correct === k}">
+            <b>${k ? '✕' : '✓'}</b>${label}${q.correct === k ? '<em>Right answer</em>' : ''}</button>`).join('')}
+        </div>
+        <p class="hint">Tap the right answer.</p>` : q.type === 'slider' ? `
+        <div class="slider-edit">
+          <label><span>From</span><input type="number" inputmode="decimal" data-f="min" value="${q.min}"></label>
+          <label><span>To</span><input type="number" inputmode="decimal" data-f="max" value="${q.max}"></label>
+          <label class="sl-answer"><span>Right answer</span><input type="number" inputmode="decimal" data-f="target" value="${q.answer}"></label>
+          <label><span>Unit</span><input data-f="unit" maxlength="12" placeholder="e.g. m, %, years" value="${esc(q.unit)}"></label>
+          <label class="select"><span>Steps of</span><select data-f="step">${STEPS.map((v) => `<option value="${v}" ${v === q.step ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+          <label class="select"><span>Close enough</span><select data-f="margin">${MARGIN_LABELS.map(([v, l]) => `<option value="${v}" ${v === q.margin ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        </div>
+        <div class="sl-preview">${sliderPreview(q)}</div>
+        <p class="hint">Players drag a slider to their guess. Spot on scores full points; inside the shaded band, the closer the better.</p>` : `
         <div class="answers-edit">
           ${q.answers.map((a, k) => `
             <div class="ans t${k}">
@@ -582,6 +623,12 @@
         <p class="hint">Tap ✓ on the correct answer.</p>`}
       </section>`;
     };
+    function sliderPreview(q) {
+      const ok = [q.min, q.max, q.answer].every((v) => Number.isFinite(+v)) && +q.min < +q.max && +q.answer >= +q.min && +q.answer <= +q.max;
+      if (!ok) return '<p class="hint warn">Set a range with the right answer inside it.</p>';
+      const sq = { min: +q.min, max: +q.max, unit: q.unit };
+      return numberLine(sq, { answer: +q.answer, tolerance: MARGIN_SHARE[q.margin] * (sq.max - sq.min) });
+    }
     const draw = () => { list.innerHTML = d.questions.map(card).join(''); };
     draw();
 
@@ -625,7 +672,12 @@
       if (f === 'title') q.title = e.target.value;
       else if (f === 'answer') q.answers[+e.target.dataset.k] = e.target.value;
       else if (f === 'time') q.time = +e.target.value;
+      else if (['min', 'max', 'target', 'step'].includes(f)) q[f === 'target' ? 'answer' : f] = e.target.value === '' ? '' : +e.target.value;
+      else if (f === 'unit' || f === 'margin') q[f] = e.target.value;
       else if (f === 'correct') q.correct = +e.target.value;
+      if (['min', 'max', 'target', 'unit', 'margin', 'step'].includes(f)) {  // refresh just this card's number line
+        e.target.closest('.qcard').querySelector('.sl-preview').innerHTML = sliderPreview(q);
+      }
       save();
     });
     list.addEventListener('change', (e) => {
@@ -640,7 +692,8 @@
       const act = t.dataset.act;
       if (act === 'del') d.questions.splice(i, 1);
       if (act === 'noimg') { q.image = null; q.regions = []; }
-      if (act === 'type') q.type = t.dataset.type;
+      if (act === 'type') { q.type = t.dataset.type; if (q.type === 'tf' && q.correct > 1) q.correct = 0; }
+      if (act === 'tf') q.correct = +t.dataset.v;
       if (act === 'rdel') q.regions.splice(+t.dataset.r, 1);
       save(); draw();
     });
@@ -700,6 +753,19 @@
           if (!q.image) return toast(`Question ${n} needs a picture to pin on`);
           if (!q.regions?.length) return toast(`Question ${n}: drag on the picture to mark the right area`);
           payload.questions.push({ type: 'pin', title: q.title.trim(), image: q.image, regions: q.regions, time: q.time });
+          continue;
+        }
+        if (q.type === 'tf') {
+          payload.questions.push({ type: 'tf', title: q.title.trim(), image: q.image, correct: q.correct ? 1 : 0, time: q.time });
+          continue;
+        }
+        if (q.type === 'slider') {
+          const [min, max, answer] = [q.min, q.max, q.answer].map(Number);
+          if (![min, max, answer].every(Number.isFinite) || q.min === '' || q.max === '' || q.answer === '') return toast(`Question ${n}: fill in the slider numbers`);
+          if (min >= max) return toast(`Question ${n}: “From” must be lower than “To”`);
+          if (answer < min || answer > max) return toast(`Question ${n}: the right answer must be between ${numFmt(min)} and ${numFmt(max)}`);
+          if ((max - min) / q.step > 100000) return toast(`Question ${n}: pick bigger steps for that range`);
+          payload.questions.push({ type: 'slider', title: q.title.trim(), image: q.image, time: q.time, min, max, answer, step: q.step, unit: q.unit.trim(), margin: q.margin });
           continue;
         }
         const kept = q.answers.map((a, k) => ({ a: a.trim(), k })).filter((x) => x.a);
@@ -781,14 +847,18 @@
           ${quiz.questions.map((q, i) => `
             <section class="card pcard">
               <header><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="grow"></span>
-                <span class="pill dim">${q.type === 'pin' ? 'Pin' : 'Quiz'}</span><span class="pill">${q.time}s</span></header>
+                <span class="pill dim">${TYPE_LABEL[q.type] || 'Quiz'}</span><span class="pill">${q.time}s</span></header>
               <h2>${esc(q.title)}</h2>
               ${q.type === 'pin'
                 ? `${pinBox(q.image, q.regions.map((r) => regionEl(r)).join(''))}<p class="hint">${q.regions.length > 1
                   ? `Players drop up to ${q.regions.length} pins. A pin in every area scores full points; each area found earns its share.`
                   : 'Pins inside the highlighted area score.'}</p>`
+                : q.type === 'slider'
+                ? `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+                   ${numberLine(q, { answer: q.answer, tolerance: MARGIN_SHARE[q.margin] * (q.max - q.min) })}
+                   <p class="hint">Right answer ${esc(withUnit(q.answer, q.unit))}${q.margin === 'exact' ? ', exact guesses only' : '; guesses in the shaded band score too'}.</p>`
                 : `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
-                   ${tiles(q.answers, (k) => (k === q.correct ? { cls: 'right', extra: '<em>✓ Correct</em>' } : { cls: 'soft' }))}`}
+                   ${tiles(q.answers, (k) => (k === q.correct ? { cls: 'right', extra: '<em>✓ Correct</em>' } : { cls: 'soft' }), q.type)}`}
             </section>`).join('')}
           <div class="cta end"><button class="btn primary" id="open2">Open lobby →</button></div>
         </main>`;
@@ -853,6 +923,12 @@
               ? s.regions.map((r) => regionEl(r)).join('') + s.pins.map((p) => marker(p.x, p.y, `small drop-in ${p.ok ? 'ok' : 'miss'}`, p.name)).join('')
               : '')}
              ${reveal ? `<p class="pinstat"><strong>${s.hits}</strong> of ${s.count} ${s.regions.length > 1 ? `found all ${s.regions.length} areas` : 'landed inside'}</p>` : ''}`
+          : q.type === 'slider'
+          ? `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+             <div class="slider-stage">${reveal
+               ? `${numberLine(q, { answer: s.correct, tolerance: s.tolerance, guesses: s.guesses })}
+                  <p class="pinstat"><strong>${s.hits}</strong> of ${s.count} ${s.tolerance ? 'were close enough' : 'got it exactly'}</p>`
+               : `${numberLine(q)}<p class="pinstat">Somewhere between <strong>${esc(withUnit(q.min, q.unit))}</strong> and <strong>${esc(withUnit(q.max, q.unit))}</strong></p>`}</div>`
           : q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : '';
         app.innerHTML = `
           <main class="page stage ${reveal ? 'is-reveal' : ''} ${pin ? 'pinq' : ''}">
@@ -875,10 +951,10 @@
                 ? `<aside class="card side"><p class="eyebrow">Leaderboard</p><ol class="board">${boardRows(s.players, 5)}</ol></aside>`
                 : '<div class="clock"><span data-secs></span></div>'}
             </section>
-            ${pin ? '' : tiles(q.answers, (i) => (!reveal ? {} : {
+            ${pin || q.type === 'slider' ? '' : tiles(q.answers, (i) => (!reveal ? {} : {
               cls: i === s.correct ? 'right' : 'dimmed',
               extra: `<em>${i === s.correct ? '✓ ' : ''}${s.counts[i]}</em>`,
-            }))}
+            }), q.type)}
           </main>`;
         $('#next').onclick = () => act(s, 'next');
         return;
@@ -1048,6 +1124,49 @@
         return;
       }
 
+      if (s.phase === 'question' && s.choice === null && s.question.type === 'slider') {
+        const q = s.question;
+        const mid = Math.round(((q.min + q.max) / 2 - q.min) / q.step) * q.step + q.min;
+        app.innerHTML = `
+          <main class="page stage player sliderq">
+            <div class="timerbar"><i data-bar></i></div>
+            <header class="bar">
+              <span class="pill">${s.qIndex + 1} / ${s.total}</span>
+              <span class="grow"></span>
+              <span class="pill timer"><span data-secs></span>s</span>
+            </header>
+            <section class="qwrap"><div class="qmain">
+              <h1 class="qtitle">${esc(q.title)}</h1>
+              ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+              <div class="guess">
+                <output class="guess-value" id="gv"></output>
+                <input type="range" id="guess" min="${q.min}" max="${q.max}" step="${q.step}" value="${mid}" aria-label="Your guess">
+                <div class="nl-ends"><span>${esc(withUnit(q.min, q.unit))}</span><span>${esc(withUnit(q.max, q.unit))}</span></div>
+                <div class="nudge"><button class="btn small" data-n="-1" aria-label="A step lower">−</button><button class="btn small" data-n="1" aria-label="A step higher">+</button></div>
+              </div>
+            </div></section>
+            <div class="lockbar"><button class="btn primary" id="lock">Lock in →</button></div>
+          </main>`;
+        const range = $('#guess');
+        const show = () => {
+          $('#gv').textContent = withUnit(+range.value, q.unit);
+          range.style.setProperty('--fill', `${((range.value - q.min) / (q.max - q.min)) * 100}%`);
+        };
+        range.oninput = show;
+        document.querySelectorAll('.nudge [data-n]').forEach((b) => {
+          b.onclick = () => { range.value = +range.value + b.dataset.n * q.step; show(); buzz(6); };
+        });
+        show();
+        $('#lock').onclick = () => {
+          $('#lock').disabled = true;
+          range.disabled = true;
+          buzz(12);
+          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: +range.value })
+            .catch((err) => { toast(err.message); $('#lock').disabled = false; range.disabled = false; });
+        };
+        return;
+      }
+
       if (s.phase === 'question' && s.choice === null) {
         const q = s.question;
         app.innerHTML = `
@@ -1062,7 +1181,7 @@
               <h1 class="qtitle">${esc(q.title)}</h1>
               ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
             </div></section>
-            ${tiles(q.answers, () => ({ button: true }))}
+            ${tiles(q.answers, () => ({ button: true }), q.type)}
           </main>`;
         $('.tiles').onclick = (e) => {
           const t = e.target.closest('[data-choice]');
@@ -1077,7 +1196,10 @@
 
       if (s.phase === 'question') {
         return centered(`
-          ${s.question.type === 'pin' ? `<div class="avatar pin-avatar">${PIN}</div>` : `<div class="avatar t${s.choice}">${L[s.choice]}</div>`}
+          ${s.question.type === 'pin' ? `<div class="avatar pin-avatar">${PIN}</div>`
+            : s.question.type === 'slider' ? `<div class="avatar slider-avatar">${esc(withUnit(s.choice, s.question.unit))}</div>`
+            : s.question.type === 'tf' ? `<div class="avatar ${s.choice ? 't0' : 't1'}">${s.choice ? '✕' : '✓'}</div>`
+            : `<div class="avatar t${s.choice}">${L[s.choice]}</div>`}
           <h1 class="display">Locked <em>in.</em></h1>
           <p class="lede">Waiting for everyone else<span class="dots"></span></p>`);
       }
@@ -1085,9 +1207,13 @@
       if (s.phase === 'reveal') {
         const right = s.right;
         const pin = s.question.type === 'pin';
+        const slider = s.question.type === 'slider';
         const areas = pin ? s.regions.length : 0;
         const partial = pin && !right && s.found > 0;
-        const why = right ? (pin ? (areas > 1 ? `You found all ${areas} areas.` : 'Right on target.') : 'Correct — nicely done.')
+        const exact = slider && s.choice !== null && Math.abs(s.choice - s.correct) < 1e-9;
+        const why = slider ? (s.choice === null ? `The answer was <strong>${esc(withUnit(s.correct, s.question.unit))}</strong>.`
+            : `The answer was <strong>${esc(withUnit(s.correct, s.question.unit))}</strong> · you said ${esc(withUnit(s.choice, s.question.unit))}.${exact ? ' Spot on!' : right ? ' Close enough.' : ''}`)
+          : right ? (pin ? (areas > 1 ? `You found all ${areas} areas.` : 'Right on target.') : 'Correct — nicely done.')
           : pin ? (s.choice === null ? `Here’s where the right area${areas > 1 ? 's were' : ' was'}.`
             : partial ? `You found ${s.found} of ${areas} areas.` : `Your pin${pinsOf(s.choice).length > 1 ? 's' : ''} missed the area${areas > 1 ? 's' : ''}.`)
           : `The answer was <strong>${esc(s.question.answers[s.correct])}</strong>.`;
@@ -1098,6 +1224,7 @@
           <p class="lede">${why}</p>
           ${pin ? pinBox(s.question.image, s.regions.map((r) => regionEl(r)).join('')
             + pinsOf(s.choice).map((pt) => marker(pt[0], pt[1], `drop-in ${s.regions.some((r) => inRegion(r, pt)) ? 'ok' : 'miss'}`)).join(''), 'result') : ''}
+          ${slider ? numberLine(s.question, { answer: s.correct, tolerance: s.tolerance, you: s.choice }) : ''}
           <p class="standing">${ordinal(s.rank)} of ${s.count} · ${fmt(s.score)} pts</p>`);
       }
 

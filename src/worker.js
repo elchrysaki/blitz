@@ -62,6 +62,17 @@ function cleanQuiz(body, quizId = null, old = null) {
       images.push(image);
       return;
     }
+    if (q.type === "tf") {
+      if (q.correct !== 0 && q.correct !== 1) throw new UserError(`Question ${n}: pick True or False`);
+      questions.push({ type: "tf", title: qtitle, answers: ["True", "False"], correct: q.correct, time, image: !!image });
+      images.push(image);
+      return;
+    }
+    if (q.type === "slider") {
+      questions.push({ type: "slider", title: qtitle, ...cleanSlider(q, n), time, image: !!image });
+      images.push(image);
+      return;
+    }
     if (!Array.isArray(q.answers)) throw new UserError(`Question ${n} needs answers`);
     const answers = q.answers.map((a) => text(a).trim().slice(0, 100));
     if (answers.length < 2 || answers.length > 4 || !answers.every(Boolean)) {
@@ -103,6 +114,30 @@ function cleanImage(image, quizId, old, n) {
   throw new UserError(`Question ${n} has an unsupported picture`);
 }
 
+// Slider questions: a range, a step, the right value, an optional unit, and how close counts.
+const MARGINS = { exact: 0, low: 0.05, medium: 0.1, high: 0.2 }; // share of the range
+const snap = (v, q) => Math.round((Math.round((v - q.min) / q.step) * q.step + q.min) * 1e6) / 1e6;
+function cleanSlider(q, n) {
+  const num = (v) => (typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+  const min = num(q.min), max = num(q.max), step = num(q.step), answer = num(q.answer);
+  const fine = (v) => Number.isFinite(v) && Math.abs(v) <= 1e9;
+  if (![min, max, step, answer].every(fine)) throw new UserError(`Question ${n}: fill in the slider numbers`);
+  if (min >= max) throw new UserError(`Question ${n}: the slider's lowest value must be below its highest`);
+  if (step <= 0 || (max - min) / step > 100000) throw new UserError(`Question ${n}: pick a bigger slider step`);
+  if (answer < min || answer > max) throw new UserError(`Question ${n}: the right value must be inside the range`);
+  const margin = Object.hasOwn(MARGINS, q.margin) ? q.margin : "medium";
+  const sl = { min, max, step, margin, unit: text(q.unit).trim().slice(0, 12) };
+  return { ...sl, answer: snap(answer, sl) };
+}
+// 1 for a spot-on guess; inside the margin, from 1 down to 0.5 at its edge; 0 outside it.
+function sliderShare(q, v) {
+  if (typeof v !== "number") return 0;
+  const dist = Math.abs(v - q.answer);
+  if (dist < 1e-9) return 1;
+  const tol = MARGINS[q.margin] * (q.max - q.min);
+  return tol && dist <= tol + 1e-9 ? 1 - 0.5 * (dist / tol) : 0;
+}
+
 // Target areas for a pin question: rectangles as fractions (0-1) of the picture.
 function cleanRegions(regions, n) {
   if (!Array.isArray(regions) || regions.length < 1 || regions.length > 8) {
@@ -130,6 +165,7 @@ const areasFound = (q, choice) => q.regions.filter((r) => pinsOf(choice).some((p
 function isRight(q, choice) {
   if (choice === null || choice === undefined) return false;
   if (isPin(q)) return areasFound(q, choice) === q.regions.length;
+  if (q.type === "slider") return sliderShare(q, choice) > 0;
   return choice === q.correct;
 }
 
@@ -605,6 +641,9 @@ export class GameRoom extends DurableObject {
         c.x >= 0 && c.x <= 1 && c.y >= 0 && c.y <= 1;
       if (!list.length || list.length > q.regions.length || !list.every(ok)) return;
       choice = list.map((c) => [round4(c.x), round4(c.y)]);
+    } else if (q.type === "slider") {
+      if (typeof choice !== "number" || !Number.isFinite(choice) || choice < q.min || choice > q.max) return;
+      choice = snap(choice, q);
     } else if (!Number.isInteger(choice) || choice < 0 || choice >= q.answers.length) {
       return;
     }
@@ -621,7 +660,8 @@ export class GameRoom extends DurableObject {
     for (const p of Object.values(s.players)) {
       p.right = isRight(q, p.choice);
       // Pin questions give credit for each area found; quiz questions are all or nothing.
-      const share = isPin(q) ? (p.choice === null ? 0 : areasFound(q, p.choice) / q.regions.length) : p.right ? 1 : 0;
+      const share = isPin(q) ? (p.choice === null ? 0 : areasFound(q, p.choice) / q.regions.length)
+        : q.type === "slider" ? sliderShare(q, p.choice) : p.right ? 1 : 0;
       if (isPin(q)) p.found = p.choice === null ? 0 : areasFound(q, p.choice);
       if (share > 0) {
         // Right answers earn 500-1000: the faster, the closer to 1000. Partly right pins earn their share of that.
@@ -667,8 +707,9 @@ export class GameRoom extends DurableObject {
 
   question() {
     const q = this.s.quiz.questions[this.s.q];
-    return { type: isPin(q) ? "pin" : "quiz", title: q.title, answers: q.answers || [], time: q.time, image: q.image,
-      ...(isPin(q) ? { maxPins: q.regions.length } : {}) };  // how many pins a player may drop (one per area)
+    return { type: q.type === "tf" || q.type === "slider" ? q.type : isPin(q) ? "pin" : "quiz", title: q.title, answers: q.answers || [], time: q.time, image: q.image,
+      ...(isPin(q) ? { maxPins: q.regions.length } : {}),  // how many pins a player may drop (one per area)
+      ...(q.type === "slider" ? { min: q.min, max: q.max, step: q.step, unit: q.unit } : {}) };
   }
 
   state(pid) {
@@ -685,6 +726,7 @@ export class GameRoom extends DurableObject {
       st.remaining = Math.max(0, Math.floor(q.time * 1000 - (Date.now() - s.started)));
       if (s.phase === "reveal") {
         if (isPin(q)) st.regions = q.regions;
+        else if (q.type === "slider") Object.assign(st, { correct: q.answer, tolerance: MARGINS[q.margin] * (q.max - q.min) });
         else st.correct = q.correct;
       }
     }
@@ -698,6 +740,9 @@ export class GameRoom extends DurableObject {
           if (isPin(q)) {
             st.pins = players.filter((p) => p.choice !== null)
               .flatMap((p) => pinsOf(p.choice).map((pt) => ({ x: pt[0], y: pt[1], ok: q.regions.some((r) => inRegion(r, pt)), name: p.name })));
+            st.hits = players.filter((p) => p.right).length;
+          } else if (q.type === "slider") {
+            st.guesses = players.filter((p) => p.choice !== null).map((p) => ({ name: p.name, v: p.choice, ok: p.right }));
             st.hits = players.filter((p) => p.right).length;
           } else {
             st.counts = st.question.answers.map((_, i) => players.filter((p) => p.choice === i).length);

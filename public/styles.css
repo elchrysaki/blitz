@@ -317,6 +317,71 @@ button.tile:active { transform: scale(.97); }
 .tile.right { box-shadow: 0 0 0 3px var(--bg), 0 0 0 6px var(--good); }
 .pcard .tile { min-height: 60px; font-size: 17px; animation: none; }
 
+/* ---------- true / false ---------- */
+.tf-edit { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tf-pick { position: relative; display: flex; align-items: center; gap: 12px; height: 64px; padding: 0 16px; border-radius: 18px;
+  font: 700 19px var(--display); color: var(--ink); background: var(--solid); border: 1.5px solid var(--edge-soft);
+  transition: background-color .2s ease, border-color .2s ease, color .2s ease, var(--press); }
+.tf-pick b { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; font-size: 17px; background: rgba(246, 241, 233, .1); }
+.tf-pick em { margin-left: auto; font: 700 12px var(--sans); letter-spacing: .04em; text-transform: uppercase; }
+.tf-pick.on.is-true { background: var(--turquoise); border-color: var(--turquoise); color: var(--bg); }
+.tf-pick.on.is-false { background: var(--vermilion); border-color: var(--vermilion); color: var(--bg); }
+.tf-pick.on b { background: rgba(3, 42, 60, .16); }
+.tf-pick:active { transform: scale(.97); }
+.tiles.tf .tile { min-height: 110px; font-size: clamp(22px, 3vw, 34px); justify-content: center; }
+.tiles.tf .tile b { width: 46px; height: 46px; font-size: 22px; }
+.player .tiles.tf { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.player .tiles.tf .tile { min-height: 132px; flex-direction: column; text-align: center; }
+
+/* ---------- slider ---------- */
+.slider-edit { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.slider-edit label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; color: var(--mute); min-width: 0; }
+.slider-edit input { height: var(--ctl-sm); border-radius: 12px; background: var(--solid); border: 1.5px solid var(--edge-soft);
+  padding: 0 12px; color: var(--ink); font: 600 16px var(--sans); outline: 0; width: 100%; min-width: 0; font-variant-numeric: tabular-nums; }
+.slider-edit input:focus { border-color: var(--ice); }
+.slider-edit .sl-answer input { border-color: var(--accent); }
+.slider-edit .select { display: grid; gap: 6px; color: var(--mute); }
+.slider-edit .select select { width: 100%; }
+.sl-preview { padding: 8px 4px 0; }
+.hint.warn { color: var(--vermilion-hi); }
+/* a number line with the range, a "close enough" band, the answer, and guesses */
+.numline { width: 100%; padding: 30px 0 4px; }
+.nl-track { position: relative; height: 12px; border-radius: 6px; background: rgba(246, 241, 233, .14); box-shadow: inset 0 1px 0 rgba(1, 16, 28, .3); }
+.nl-band { position: absolute; top: 0; bottom: 0; border-radius: 6px; background: rgba(31, 168, 210, .45); }
+.nl-dot { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+  background: var(--sand); border: 2px solid var(--bg); opacity: .9; animation: fade .3s ease both; }
+.nl-dot.ok { background: var(--turquoise); }
+.nl-you { position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--ice); border: 3px solid var(--bg); box-shadow: 0 0 0 2px var(--ice); }
+.nl-answer { position: absolute; top: -8px; bottom: -8px; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--accent); }
+.nl-answer span { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); white-space: nowrap;
+  padding: 3px 10px; border-radius: 999px; background: var(--accent); color: var(--bg); font: 800 13px var(--display); }
+.nl-ends { display: flex; justify-content: space-between; margin-top: 10px; color: var(--mute); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.slider-stage { width: min(720px, 100%); display: grid; gap: 12px; justify-items: center; }
+.slider-stage .numline { padding-top: 44px; }
+.slider-stage .nl-track { height: 18px; border-radius: 9px; }
+.slider-stage .nl-dot { width: 22px; height: 22px; margin: -11px 0 0 -11px; border-width: 3px; }
+.slider-stage .nl-answer { top: -10px; bottom: -10px; width: 5px; }
+.slider-stage .nl-answer span { font-size: 17px; padding: 4px 12px; }
+.slider-stage .nl-ends { font-size: 15px; }
+/* the player's slider */
+.guess { width: min(560px, 100%); display: grid; gap: 14px; justify-items: center; margin-top: 8px; }
+.guess-value { font: 800 clamp(44px, 9vw, 72px)/1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.guess .nl-ends { width: 100%; margin-top: -6px; }
+.guess input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; border-radius: 7px; outline: 0; cursor: pointer;
+  background: linear-gradient(90deg, var(--accent) var(--fill, 50%), rgba(246, 241, 233, .16) var(--fill, 50%)); touch-action: none; }
+.guess input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--ink); border: 4px solid var(--accent); box-shadow: var(--lift); }
+.guess input[type=range]::-moz-range-thumb { width: 30px; height: 30px; border-radius: 50%; background: var(--ink); border: 4px solid var(--accent); }
+.guess input[type=range]:focus-visible { outline: 2px solid var(--ice); outline-offset: 6px; }
+.nudge { display: flex; gap: 10px; }
+.nudge .btn { width: 56px; font-size: 22px; padding: 0; }
+.slider-avatar { width: auto; min-width: 96px; padding: 0 22px; font-size: 30px; background: var(--ice); }
+@media (max-width: 760px) {
+  .slider-edit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tf-pick { height: 56px; font-size: 17px; }
+  .qcard .seg button { padding: 0 10px; font-size: 14px; }
+}
+
 /* ---------- lobby ---------- */
 .lobby-grid { display: grid; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr); gap: 32px; align-items: start; padding-top: 36px; }
 .joinbox { padding: 32px; display: grid; gap: 22px; container-type: inline-size; position: sticky; top: 96px; }
@@ -397,7 +462,7 @@ button.tile:active { transform: scale(.97); }
 
 /* ---------- pin questions ---------- */
 .seg { display: inline-flex; align-items: stretch; height: var(--ctl-sm); padding: 3px; border-radius: 999px; background: var(--solid); border: 1.5px solid var(--edge-soft); }
-.seg button { padding: 0 14px; border-radius: 999px; font-size: 15px; font-weight: 600; color: rgba(246, 241, 233, .85); transition: background-color .2s ease, color .2s ease, var(--press); }
+.seg button { white-space: nowrap; padding: 0 14px; border-radius: 999px; font-size: 15px; font-weight: 600; color: rgba(246, 241, 233, .85); transition: background-color .2s ease, color .2s ease, var(--press); }
 .seg button.on { background: var(--ink); color: var(--bg); }
 .pinbox { position: relative; display: inline-block; max-width: 100%; line-height: 0; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .pinbox img { max-width: 100%; max-height: 380px; width: auto; height: auto; border-radius: 18px; }
