@@ -36,9 +36,9 @@
 @font-face { font-family: "DM Sans"; src: url(/fonts/dm-sans.woff2) format("woff2"); font-weight: 400 700; font-style: normal; font-display: swap; }
 
 * { box-sizing: border-box; margin: 0; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; background: var(--bg); }
 body {
-  background: var(--bg);
+  background: transparent;  /* the root paints the color; the denim layer sits between them */
   color: var(--ink);
   font: 17px/1.5 var(--sans);
   letter-spacing: -.011em;
@@ -60,11 +60,14 @@ em { font-style: normal; color: var(--accent); }  /* highlighted word: same face
 
 /* ---------- ambient background ---------- */
 /* Static glow: painted once, never animated or blurred (blur + animation kept the GPU busy on every frame). */
-.aurora { position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background:
-    radial-gradient(70vmax 50vmax at 50% -12%, rgba(31, 168, 210, .38), transparent 70%),
-    radial-gradient(40vmax 40vmax at 100% 100%, rgba(255, 90, 31, .12), transparent 70%),
-    radial-gradient(rgba(246, 241, 233, .07) 1px, transparent 1.5px) 0 0 / 22px 22px;
+/* Denim: a flat teal ground woven with a diagonal twill, faint cross threads and slubby
+   cotton noise. Every layer is static and painted once, so it costs nothing while idle. */
+.aurora { position: fixed; inset: 0; z-index: -1; pointer-events: none; background-color: var(--bg);
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8 .05' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .83 0 0 0 0 .93 0 0 0 0 .96 .45 0 0 0 -.14'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23s)'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(-62deg, rgba(212, 238, 246, .045) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(28deg, rgba(1, 20, 30, .3) 0 1px, transparent 1px 4px);
+  background-size: 320px 320px, auto, auto;
 }
 .aurora i { display: none; }
 
@@ -107,6 +110,9 @@ em { font-style: normal; color: var(--accent); }  /* highlighted word: same face
 .pill.dim { color: var(--mute); }
 .pill.score-pill { color: var(--accent); }
 .card { background: rgba(6, 66, 92, .72); border: 1px solid var(--line); border-radius: 28px; box-shadow: inset 0 1px 0 rgba(246, 241, 233, .05); }
+/* Contrast top-stitching, like the orange thread on jeans */
+.card, .nav { outline: 1.5px dashed rgba(255, 90, 31, .72); outline-offset: -7px; }
+.card.qtile { outline-offset: -6px; }
 input::placeholder { color: rgba(246, 241, 233, .28); }
 
 .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
