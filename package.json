@@ -1,0 +1,14 @@
+{
+  "name": "blitz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "No-login live quiz game: quiz and pin questions, speed scoring, 7-day cookie dashboard.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "local": "python3 server.py"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0"
+  }
+}
