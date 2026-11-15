@@ -52,6 +52,7 @@ The palette comes from a teal-and-vermilion wall painting. The colors were white
 | `--ember` | `#B8360B` | wrong (the sun's burnt core) |
 
 - **Bricolage Grotesque** (headlines, numbers, PIN, scores) and **DM Sans** (everything else). Both are served from `public/fonts/`.
+- **Logo** (`public/brand/`): `mark.svg` is a vermilion tile with a gallery-white lightning bolt and cream denim-style stitching. `logo.svg` is the mark plus the "blitz." wordmark. `mark-180.png` is the phone home-screen icon and `mark-512.png` a larger export. The nav, favicon and loading screen all use the mark.
 
 ## Speed
 

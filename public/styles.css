@@ -102,7 +102,10 @@ input::selection, textarea::selection { background: var(--accent); color: var(--
   margin-top: 12px; padding: 0 8px 0 22px; border-radius: 999px; border: 1px solid var(--line);
   background: rgba(6, 66, 92, .92); backdrop-filter: blur(24px) saturate(140%); -webkit-backdrop-filter: blur(24px) saturate(160%);
 }
-.logo { font: 800 24px/1 var(--display); letter-spacing: -.03em; }
+.logo { display: inline-flex; align-items: center; gap: 9px; font: 800 24px/1 var(--display); letter-spacing: -.03em; }
+.logo-mark { width: 34px; height: 34px; flex: none; transition: transform .35s var(--ease); }
+@media (hover: hover) and (pointer: fine) { .logo:hover .logo-mark { transform: rotate(-8deg) scale(1.06); } }
+.logo:active .logo-mark { transform: scale(.94); }
 .logo i { color: var(--accent); font-style: normal; }
 
 .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--vermilion-hi); }  /* lighter orange: small text needs the extra contrast */
@@ -150,9 +153,15 @@ input::placeholder { color: rgba(246, 241, 233, .28); }
 /* ---------- home ---------- */
 .hero { padding: clamp(32px, 7vh, 88px) 0 64px; display: grid; gap: 28px; }
 .hero .mega em { letter-spacing: -.05em; }
-.pinform { display: flex; height: 54px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); padding: 5px; }
-.pinform input { background: none; border: 0; outline: 0; width: 132px; padding: 0 16px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .08em; }
-.pinform .btn { height: 42px; padding: 0 20px; background: rgba(246, 241, 233, .12); border: 0; }
+/* Join-by-PIN: a solid surface with a cream outline so it holds its own on the denim */
+.pinform { display: flex; height: 60px; border-radius: 999px; background: var(--teal-900); border: 1.5px solid rgba(246, 241, 233, .55);
+  padding: 5px; box-shadow: 0 8px 24px rgba(1, 16, 28, .35); transition: border-color .2s ease, box-shadow .2s ease; }
+.pinform:focus-within { border-color: var(--ice); box-shadow: 0 0 0 4px rgba(212, 238, 246, .18), 0 8px 24px rgba(1, 16, 28, .35); }
+.pinform input { background: none; border: 0; outline: 0; width: 158px; padding: 0 18px; color: var(--ink);
+  font: 800 21px/1 var(--display); font-variant-numeric: tabular-nums; letter-spacing: .1em; }
+.pinform input::placeholder { color: rgba(246, 241, 233, .7); font: 600 17px var(--sans); letter-spacing: .02em; }
+.pinform .btn { height: 48px; padding: 0 24px; background: var(--ink); color: var(--bg); border: 0; font-weight: 700; }
+@media (hover: hover) and (pointer: fine) { .pinform .btn:hover { background-color: var(--ice); } }
 .steps { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }
 .steps article { padding: 28px 28px 8px 0; }
 .steps article + article { padding-left: 28px; border-left: 1px solid var(--line); }

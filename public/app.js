@@ -10,6 +10,10 @@
   const clamp = (v) => Math.min(1, Math.max(0, v));
   const r4 = (v) => Math.round(v * 1e4) / 1e4;
   const pct = (v) => `${(v * 100).toFixed(2)}%`;
+  // The Blitz mark: vermilion tile, white bolt, denim-style stitching (same as public/brand/mark.svg).
+  const MARK = '<svg class="logo-mark" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="18" fill="#FF5A1F"/>'
+    + '<rect x="5" y="5" width="54" height="54" rx="13.5" fill="none" stroke="#F6F1E9" stroke-opacity=".7" stroke-width="1.6" stroke-dasharray="3.2 2.6" stroke-linecap="round"/>'
+    + '<path d="M37.5 9.5 17 36.5h12.2L25.4 54.5 47 26.4H34.6l2.9-16.9Z" fill="#F6F1E9" stroke="#032A3C" stroke-width="2.4" stroke-linejoin="round"/></svg>';
   const PIN = '<svg viewBox="0 0 24 32" aria-hidden="true"><path d="M12 0C5.4 0 0 5.2 0 11.7 0 20.4 12 32 12 32s12-11.6 12-20.3C24 5.2 18.6 0 12 0z"/><circle cx="12" cy="11.5" r="4.5"/></svg>';
   const regionEl = (r, i, del) => `<div class="region" style="left:${pct(r.x)};top:${pct(r.y)};width:${pct(r.w)};height:${pct(r.h)}">${
     del ? `<button class="rdel" data-act="rdel" data-r="${i}" aria-label="Remove area">×</button>` : ''}</div>`;
@@ -76,7 +80,7 @@
 
   const nav = (right = '') => `
     <header class="nav">
-      <a class="logo" href="/" data-link>blitz<i>.</i></a>
+      <a class="logo" href="/" data-link aria-label="Blitz home">${MARK}<span>blitz<i>.</i></span></a>
       <a class="navlink ${location.pathname === '/dashboard' ? 'on' : ''}" href="/dashboard" data-link>Dashboard</a>
       <span class="grow"></span>${right}
     </header>`;

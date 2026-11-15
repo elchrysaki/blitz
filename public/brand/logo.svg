@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 248 64" role="img" aria-label="Blitz">
+  <!-- Blitz lockup: the mark plus the wordmark in Bricolage Grotesque (served from /fonts) -->
+  <style>
+    @font-face { font-family: "Bricolage Grotesque"; src: url(/fonts/bricolage-grotesque.woff2) format("woff2"); font-weight: 500 800; }
+    .w { font: 800 50px "Bricolage Grotesque", system-ui, sans-serif; letter-spacing: -1.6px; fill: #F6F1E9; }
+    .d { fill: #FF5A1F; }
+  </style>
+  <rect width="64" height="64" rx="18" fill="#FF5A1F"/>
+  <rect x="5" y="5" width="54" height="54" rx="13.5" fill="none" stroke="#F6F1E9" stroke-opacity=".7" stroke-width="1.6" stroke-dasharray="3.2 2.6" stroke-linecap="round"/>
+  <path d="M37.5 9.5 17 36.5h12.2L25.4 54.5 47 26.4H34.6l2.9-16.9Z" fill="#F6F1E9" stroke="#032A3C" stroke-width="2.4" stroke-linejoin="round"/>
+  <text class="w" x="78" y="48">blitz<tspan class="d">.</tspan></text>
+</svg>
