@@ -55,7 +55,22 @@ a { color: inherit; text-decoration: none; }
 img { display: block; max-width: 100%; }
 em { font-style: normal; color: var(--accent); }  /* highlighted word: same face, orange */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-::selection { background: var(--accent); color: var(--bg); }
+/* Text selection: browsers can't round a native selection, so the native highlight is hidden
+   and app.js draws rounded pills BEHIND the text instead: on the page layer, or inside the
+   card / tile / nav the text sits in, so they appear above that surface but under its words.
+   Text fields keep a plain native selection. */
+::selection { background: transparent; color: var(--bg); }
+input::selection, textarea::selection { background: var(--accent); color: var(--bg); }
+.card, .nav, .tile { isolation: isolate; }
+.card { position: relative; }
+.hl-layer { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+#hl { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+.hl-layer i, #hl i {
+  position: absolute; background: var(--accent);
+  transform-origin: left center; animation: hl-in .18s var(--ease) both;
+  transition: left .1s var(--ease), top .1s var(--ease), width .1s var(--ease), height .1s var(--ease);
+}
+@keyframes hl-in { from { transform: scaleX(.7); opacity: 0; } }
 .grow { flex: 1; }
 
 /* ---------- ambient background ---------- */
@@ -363,6 +378,7 @@ button.tile:active { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) {
   .page, .tile, .board li, .qtile, .avatar, .verdict, .block, .drop-in { animation-name: fade !important; animation-duration: .2s !important; animation-delay: 0s !important; }
   .livebadge::before, .livedot, .dots::after { animation: none !important; }
+  #hl i, .hl-layer i { animation: none; transition: none; }
   .btn:active, button.tile:active, .ghost:active, .navlink:active, .seg button:active, .pick:active i, .add:active, .newtile:active { transform: none; }
   .qtile:hover .cover img { transform: none; }
   #toast { transform: translate(-50%, 0); }

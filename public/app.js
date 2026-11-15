@@ -854,5 +854,58 @@
     } else joinForm();
   }
 
+  // ---------- rounded text selection ----------
+  // One rounded pill per selected line, drawn behind the words. Each pill lives in the
+  // surface its line sits on (card, tile, nav, or the page), above that surface's background
+  // and below its text. Only does work while something is selected.
+  const SURFACES = '.card, .nav, .tile';
+  const pageLayer = document.createElement('div');
+  pageLayer.id = 'hl';
+  pageLayer.setAttribute('aria-hidden', 'true');
+  (document.querySelector('.aurora') || document.body.firstChild).after(pageLayer);  // just above the denim, below everything else
+  const pills = [];
+  let hlFrame = 0;
+  const layerFor = (surface) => {
+    if (!surface) return pageLayer;
+    let layer = surface.querySelector(':scope > .hl-layer');
+    if (!layer) { layer = document.createElement('span'); layer.className = 'hl-layer'; layer.setAttribute('aria-hidden', 'true'); surface.prepend(layer); }
+    return layer;
+  };
+  const clearPills = () => { while (pills.length) pills.pop().remove(); };
+  function drawSelection() {
+    hlFrame = 0;
+    const sel = getSelection();
+    const field = document.activeElement?.matches?.('input, textarea');
+    if (!sel || sel.isCollapsed || !sel.rangeCount || field) return clearPills();
+    // Merge the browser's per-fragment boxes into one box per line.
+    const lines = [];
+    for (const r of sel.getRangeAt(0).getClientRects()) {
+      if (r.width < 1 || r.height < 1) continue;
+      const line = lines.find((l) => Math.abs((l.top + l.bottom) / 2 - (r.top + r.bottom) / 2) < r.height / 3);
+      if (line) {
+        line.left = Math.min(line.left, r.left); line.right = Math.max(line.right, r.right);
+        line.top = Math.min(line.top, r.top); line.bottom = Math.max(line.bottom, r.bottom);
+      } else lines.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+    }
+    while (pills.length > lines.length) pills.pop().remove();
+    lines.forEach((l, i) => {
+      const h = l.bottom - l.top;
+      const cx = (l.left + l.right) / 2, cy = (l.top + l.bottom) / 2;
+      const hit = document.elementsFromPoint(cx, cy).find((el) => !el.closest('#hl, .hl-layer'));
+      const surface = hit?.closest(SURFACES);
+      const layer = layerFor(surface);
+      const box = surface ? surface.getBoundingClientRect() : { left: 0, top: 0 };
+      const pill = pills[i] || (pills[i] = document.createElement('i'));
+      if (pill.parentNode !== layer) layer.append(pill);
+      const ph = h * 0.78, padX = Math.min(10, h * 0.18), radius = Math.min(14, ph * 0.32);
+      pill.style.cssText = `left:${l.left - box.left - padX}px;top:${cy - box.top - ph / 2}px;` +
+        `width:${l.right - l.left + padX * 2}px;height:${ph}px;border-radius:${radius}px ${radius * 0.7}px ${radius}px ${radius * 0.8}px`;
+    });
+  }
+  const queueSelection = () => { if (!hlFrame) hlFrame = requestAnimationFrame(drawSelection); };
+  document.addEventListener('selectionchange', queueSelection);
+  addEventListener('scroll', () => { if (pills.length) queueSelection(); }, { passive: true, capture: true });
+  addEventListener('resize', () => { if (pills.length) queueSelection(); });
+
   route();
 })();
