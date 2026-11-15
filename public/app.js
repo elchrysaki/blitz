@@ -37,6 +37,9 @@
     return json;
   }
 
+  // A short tap of haptic feedback on phones that support it, fired on the same frame as the visual change.
+  const buzz = (pattern) => { try { navigator.vibrate?.(pattern); } catch {} };
+
   let toastTimer;
   function toast(msg) {
     const el = $('#toast');
@@ -120,7 +123,9 @@
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
     const d = Math.floor(s / 86400);
-    return d === 1 ? 'yesterday' : `${d} days ago`;
+    if (d === 1) return 'yesterday';
+    if (d < 7) return `${d} days ago`;
+    return new Date(t * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); // after a week, a date reads better
   };
 
   // ---------- dashboard ----------
@@ -763,6 +768,7 @@
           pick = { x: r4(x), y: r4(y) };
           box.querySelector('.marker')?.remove();
           box.insertAdjacentHTML('beforeend', marker(x, y, 'drop-in'));
+          buzz(8);
           $('#lock').disabled = false;
           $('#pinhint').textContent = 'Tap again to move it';
         };
@@ -770,6 +776,7 @@
           if (!pick) return;
           $('#lock').disabled = true;
           box.classList.add('locked');
+          buzz(12);
           api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: pick })
             .catch((err) => { toast(err.message); $('#lock').disabled = false; box.classList.remove('locked'); });
         };
@@ -796,6 +803,7 @@
           const t = e.target.closest('[data-choice]');
           if (!t) return;
           document.querySelectorAll('.tile').forEach((el) => { el.disabled = true; el.classList.toggle('dimmed', el !== t); });
+          buzz(12);
           api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: +t.dataset.choice })
             .catch((err) => toast(err.message));
         };
@@ -815,6 +823,7 @@
         const why = right ? (pin ? 'Right on target.' : 'Correct — nicely done.')
           : pin ? (s.choice === null ? 'Here’s where the right area was.' : 'Your pin landed outside the area.')
           : `The answer was <strong>${esc(s.question.answers[s.correct])}</strong>.`;
+        buzz(right ? [14, 60, 14] : 40);
         return centered(`
           <div class="verdict ${right ? 'good' : 'bad'}">${right ? '✓' : '✕'}</div>
           <h1 class="display">${right ? `+${fmt(s.gained)}` : s.choice === null ? 'Time’s <em>up.</em>' : 'Not <em>quite.</em>'}</h1>
