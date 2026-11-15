@@ -34,8 +34,8 @@
   const light = (hex, t) => mixHex(hex, '#ffffff', t);
   const shade = (hex, t) => mixHex(hex, '#140c08', t);
 
-  function avatar(name) {
-    const key = (name || '?').trim();
+  function avatar(seed) {
+    const key = String(seed || '?').trim();   // the random "look" the server picked (or a name, as a fallback)
     const pick = (arr, trait) => arr[hashName(`${trait}:${key}`) % arr.length];  // each trait from its own hash
     const chance = (pct, trait) => hashName(`${trait}?${key}`) % 100 < pct;
     const skin = pick(AV.skin, 's'), hair = pick(AV.hair, 'h'), streak = pick(AV.streak, 'k');
@@ -133,7 +133,7 @@
       .replaceAll(`fill="${hair}"`, `fill="url(#hr${id})"`)
       .replaceAll(`fill="${top}"`, `fill="url(#tp${id})"`);
   }
-  const buddy = (name, cls = '') => `<div class="buddy ${cls}" data-name="${esc(name)}">${avatar(name)}<span>${esc(name)}</span></div>`;
+  const buddy = (name, look, cls = '') => `<div class="buddy ${cls}" data-name="${esc(name)}">${avatar(look || name)}<span>${esc(name)}</span></div>`;
 
   const PIN = '<svg viewBox="0 0 24 32" aria-hidden="true"><path d="M12 0C5.4 0 0 5.2 0 11.7 0 20.4 12 32 12 32s12-11.6 12-20.3C24 5.2 18.6 0 12 0z"/><circle cx="12" cy="11.5" r="4.5"/></svg>';
   const regionEl = (r, i, del) => `<div class="region" style="left:${pct(r.x)};top:${pct(r.y)};width:${pct(r.w)};height:${pct(r.h)}">${
@@ -837,7 +837,7 @@
       crowd.querySelectorAll('.buddy').forEach((el) => { if (!names.has(el.dataset.name)) el.remove(); });
       const have = new Set([...crowd.querySelectorAll('.buddy')].map((el) => el.dataset.name));
       crowd.querySelector('.crowd-empty')?.remove();
-      for (const p of s.players) if (!have.has(p.name)) crowd.insertAdjacentHTML('beforeend', buddy(p.name, 'new'));
+      for (const p of s.players) if (!have.has(p.name)) crowd.insertAdjacentHTML('beforeend', buddy(p.name, p.look, 'new'));
       if (!s.players.length) {
         crowd.innerHTML = `<div class="crowd-empty"><div class="buddy ghost-buddy"></div><div class="buddy ghost-buddy"></div><div class="buddy ghost-buddy"></div>
           <p class="waiting">Waiting for players<span class="dots"></span></p></div>`;
@@ -903,7 +903,7 @@
       if (s.phase === 'lobby') {
         return centered(`
           ${s.cover ? `<img class="intro-img" src="${s.cover}" alt="" decoding="async">` : ''}
-          ${buddy(s.name, 'me new')}
+          ${buddy(s.name, s.look, 'me new')}
           <h1 class="display">You’re in, <em>${esc(s.name)}.</em></h1>
           <p class="lede">Eyes on the host’s screen — the game starts any second<span class="dots"></span></p>`);
       }

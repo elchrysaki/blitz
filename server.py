@@ -337,7 +337,7 @@ class Game:
 
     # -- snapshots --
     def board(self):
-        rows = [{"id": pid, "name": p["name"], "score": p["score"], "gained": p["gained"]}
+        rows = [{"id": pid, "name": p["name"], "look": p.get("look"), "score": p["score"], "gained": p["gained"]}
                 for pid, p in self.players.items()]
         return sorted(rows, key=lambda r: -r["score"])
 
@@ -364,7 +364,7 @@ class Game:
                     s["correct"] = q["correct"]
         if pid is None:
             s["role"] = "host"
-            s["players"] = [{k: r[k] for k in ("name", "score", "gained")} for r in board]
+            s["players"] = [{k: r[k] for k in ("name", "score", "gained", "look")} for r in board]
             if live:
                 picks = [p["choice"] for p in self.players.values()]
                 s["answered"] = sum(c is not None for c in picks)
@@ -377,7 +377,7 @@ class Game:
                         s["counts"] = [picks.count(i) for i in range(len(s["question"]["answers"]))]
         else:
             p = self.players[pid]
-            s.update(role="player", name=p["name"], score=p["score"], gained=p["gained"],
+            s.update(role="player", name=p["name"], look=p.get("look"), score=p["score"], gained=p["gained"],
                      choice=p["choice"], right=p["right"], rank=[r["id"] for r in board].index(pid) + 1)
         return s
 
@@ -694,7 +694,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(g.players) >= 200:
             return self.fail(409, "This game is full")
         pid = secrets.token_urlsafe(12)
-        g.players[pid] = {"uid": self.uid, "name": name, "score": 0, "choice": None, "ms": 0, "gained": 0, "right": False}
+        # A random character for this player, picked once here so every screen shows the same one.
+        g.players[pid] = {"uid": self.uid, "name": name, "look": secrets.token_urlsafe(6),
+                          "score": 0, "choice": None, "ms": 0, "gained": 0, "right": False}
         u = load_user(self.uid)
         u["played"].insert(0, {"id": g.gid, "pin": g.pin, "quizTitle": g.quiz["title"], "name": name,
                                "at": time.time(), "score": 0, "rank": None, "count": None, "done": False})

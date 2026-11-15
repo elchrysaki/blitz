@@ -533,7 +533,9 @@ export class GameRoom extends DurableObject {
     }
     if (Object.keys(s.players).length >= 200) return { status: 409, body: { error: "This game is full" } };
     const pid = token(12);
-    s.players[pid] = { uid, name, score: 0, choice: null, ms: 0, gained: 0, right: false };
+    // A random character for this player, picked once here so every screen shows the same one.
+    const look = token(6);
+    s.players[pid] = { uid, name, look, score: 0, choice: null, ms: 0, gained: 0, right: false };
     this.push();
     await this.persist();
     const t = now();
@@ -650,7 +652,7 @@ export class GameRoom extends DurableObject {
   // -- snapshots (same shape as server.py) --
   board() {
     return Object.entries(this.s.players)
-      .map(([id, p]) => ({ id, name: p.name, score: p.score, gained: p.gained }))
+      .map(([id, p]) => ({ id, name: p.name, look: p.look, score: p.score, gained: p.gained }))
       .sort((a, b) => b.score - a.score);
   }
 
@@ -679,7 +681,7 @@ export class GameRoom extends DurableObject {
     const players = Object.values(s.players);
     if (pid === null) {
       st.role = "host";
-      st.players = board.map(({ name, score, gained }) => ({ name, score, gained }));
+      st.players = board.map(({ name, score, gained, look }) => ({ name, score, gained, look }));
       if (live) {
         st.answered = players.filter((p) => p.choice !== null).length;
         if (s.phase === "reveal") {
@@ -695,7 +697,7 @@ export class GameRoom extends DurableObject {
     } else {
       const p = s.players[pid];
       Object.assign(st, {
-        role: "player", name: p.name, score: p.score, gained: p.gained, choice: p.choice, right: p.right,
+        role: "player", name: p.name, look: p.look, score: p.score, gained: p.gained, choice: p.choice, right: p.right,
         rank: board.findIndex((r) => r.id === pid) + 1,
       });
     }
