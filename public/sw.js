@@ -1,8 +1,8 @@
 // Blitz service worker: makes repeat visits open instantly.
-// - App shell (page, script, styles): served from cache at once, refreshed in the background.
+// - App shell (page, script, styles): newest from the network, the saved copy if slow or offline.
 // - Quiz pictures: their URLs carry a version, so a cached copy is always right.
 // - Everything else under /api (live games, scores, saving): always straight to the network.
-const SHELL = 'blitz-shell-v3';
+const SHELL = 'blitz-shell-v4';
 const PICS = 'blitz-pics-v1';
 const SHELL_FILES = ['/', '/app.js', '/styles.css'];
 const FONTS = ['/fonts/dm-sans.woff2', '/fonts/bricolage-grotesque.woff2', '/textures/denim.webp'];  // never change
@@ -21,15 +21,22 @@ self.addEventListener('activate', (e) => {
 
 const isPic = (url) => /^\/api\/quizzes\/[^/]+\/image\/\d+$/.test(url.pathname) && url.searchParams.has('v');
 
+// Page, script and styles: ask the network first so every visit gets the newest version
+// (a quick "not changed" check most of the time); fall back to the saved copy if the
+// network is slow (over 2.5s) or offline.
 async function fromShell(req, key) {
   const cache = await caches.open(SHELL);
-  const hit = await cache.match(key);
-  const fresh = fetch(req).then((res) => {
+  const fresh = fetch(req, { cache: 'no-cache' }).then((res) => {
     if (res.ok) cache.put(key, res.clone());
     return res;
   });
-  if (hit) { fresh.catch(() => {}); return hit; }
-  return fresh;
+  const slow = new Promise((resolve) => setTimeout(resolve, 2500));
+  try {
+    const res = await Promise.race([fresh, slow.then(() => null)]);
+    if (res) return res;
+  } catch { /* offline: use the saved copy */ }
+  fresh.catch(() => {});
+  return (await cache.match(key)) || fresh;
 }
 
 async function fromPics(req) {

@@ -25,7 +25,20 @@
   <div id="app"><div class="boot"><span><img src="/brand/mark.svg" alt="" width="40" height="40">blitz<i>.</i></span></div></div>
   <div id="toast" role="status" aria-live="polite"></div>
   <script>
-    if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+    if ('serviceWorker' in navigator) {
+      // When a newer version of the app takes over right after opening the page, reload once so
+      // you see it straight away. Later in a visit (e.g. mid-game) it waits for the next visit.
+      const hadController = !!navigator.serviceWorker.controller;
+      const opened = Date.now();
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        const last = +sessionStorage.getItem('blitz:updated') || 0;   // never loop: at most one reload a minute
+        if (hadController && Date.now() - opened < 8000 && Date.now() - last > 60000) {
+          sessionStorage.setItem('blitz:updated', String(Date.now()));
+          location.reload();
+        }
+      });
+      addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+    }
   </script>
 </body>
 </html>

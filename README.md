@@ -57,7 +57,7 @@ The palette comes from a teal-and-vermilion wall painting. The colors were white
 ## Speed
 
 - **No continuous effects.** The background glow is a static gradient, cards don't blur what's behind them, and the countdown ticker only runs while a timer is on screen and the tab is visible. Idle pages use almost no CPU or GPU. People with reduced motion turned on get no animations.
-- **Service worker** (`public/sw.js`). It serves the page, script and styles from the browser's cache at once, then quietly fetches fresh copies for next time, so after a deploy each browser picks up the new version on its second visit. Quiz pictures are cached for good, since their URLs change whenever a picture changes. Live game data is never cached.
+- **Service worker** (`public/sw.js`). The page, script and styles come from the network first, usually as a quick "not changed" check, so every visit gets the newest version. The saved copy is used if the network takes over 2.5 s or is offline. When a new version takes over right as the page opens, the page reloads once to show it. Quiz pictures are cached for good, since their URLs change whenever a picture changes. Live game data is never cached.
 - **Dashboard** draws instantly from the last copy saved in `localStorage` (`blitz:me`), then refreshes from the server.
 - **Server.** The dashboard needs one D1 round trip, and Smart Placement runs the Worker near the database.
 

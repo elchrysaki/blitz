@@ -265,7 +265,8 @@ button.tile:active { transform: scale(.97); }
 .qmain { flex: 1; min-width: 0; display: grid; gap: 22px; align-content: center; justify-items: center; text-align: center; }
 .qtitle { font-family: var(--display); font-weight: 800; font-size: clamp(28px, 4.6vw, 62px); line-height: 1.04; letter-spacing: -.025em; text-wrap: balance; overflow-wrap: anywhere; }
 .qimg { max-height: 38vh; border-radius: 22px; object-fit: contain; }
-.pcard .qimg { max-height: 300px; justify-self: start; }
+.pcard .qimg { max-height: 300px; justify-self: center; }
+.pcard .pinbox { justify-self: center; }  /* pictures sit in the middle of the card, like on the game screen */
 .clock { flex: none; display: grid; place-items: center; width: clamp(88px, 12vw, 148px); aspect-ratio: 1; border-radius: 50%; border: 1px solid var(--line); background: var(--glass); font-family: var(--display); font-size: clamp(36px, 5vw, 64px); font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .side { flex: none; width: min(340px, 34%); padding: 22px; display: grid; gap: 12px; }
 .timer { color: var(--accent); }
