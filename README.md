@@ -34,15 +34,19 @@ npm install && npx wrangler deploy
 
 The colors and fonts are fixed. Use the tokens in `public/styles.css` (`:root`) and don't add new colors or fonts.
 
+The palette comes from a teal-and-vermilion wall painting. The colors were white-balanced against the gallery wall, then pushed brighter and more saturated.
+
 | Token | Color | Use |
 | --- | --- | --- |
-| `--navy-950` | `#09121E` | page background |
-| `--navy-900` | `#0E1E38` | cards, nav |
-| `--navy-700` | `#16325F` | raised details (step numbers, covers) |
-| `--cream` | `#F6EFE3` | text |
-| `--orange` | `#FF8A1F` | the one accent: primary buttons, highlighted words, labels, timer |
-| `--pink` `--sage` `--sky` `--butter` | `#EFACD4` `#B9D7A8` `#A9C5E9` `#F3DC94` | answers A–D (sage also means correct) |
-| `--coral` | `#F2836B` | wrong |
+| `--ink-950` | `#032A3C` | page background (the painting's deepest teal) |
+| `--teal-900` | `#06425C` | cards, nav |
+| `--teal-700` | `#0A6C93` | raised details (step numbers, covers) |
+| `--wall` | `#F6F1E9` | text (gallery white) |
+| `--vermilion` | `#FF5A1F` | the one accent: primary buttons, highlighted words, labels, timer; answer A |
+| `--turquoise` | `#1FA8D2` | answer B; also means correct |
+| `--ice` | `#D4EEF6` | answer C (the pale swirls) |
+| `--sand` | `#EBC9A5` | answer D (the maple floor) |
+| `--ember` | `#B8360B` | wrong (the sun's burnt core) |
 
 - **Bricolage Grotesque** (headlines, numbers, PIN, scores) and **DM Sans** (everything else). Both are served from `public/fonts/`.
 
