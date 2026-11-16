@@ -1112,3 +1112,16 @@ html.sheet-open { overflow: hidden; }
 .explore .stats-empty { margin-top: 8px; }
 /* The bar holds Dashboard, Explore and Leaderboard on wide screens; Leaderboard goes first, then Explore. */
 @media (max-width: 860px) { .nav .navlink.wider { display: none; } }
+
+/* ---------- confirm dialog (our own, instead of the browser's) ---------- */
+.confirm-back { place-items: center !important; padding: 20px !important; z-index: 70; }
+.sheet.confirm { width: min(420px, 100%); grid-template-rows: auto auto; border-radius: 26px !important; border-bottom: 1.5px solid var(--edge) !important; }
+.confirm-body { padding: 24px 24px 8px; display: grid; gap: 8px; }
+.confirm-body h2 { font: 800 22px/1.15 var(--display); letter-spacing: -.02em; overflow-wrap: anywhere; }
+.confirm-body p { color: var(--mute); font-size: 15px; }
+.confirm-foot { display: flex; gap: 10px; padding: 16px 24px 22px; }
+.confirm-foot .btn { flex: 1; }
+.btn.danger { background: var(--ember); border-color: var(--ember); color: var(--wall); }
+@media (hover: hover) and (pointer: fine) { .btn.danger:hover { background: #cf3f0e; border-color: #cf3f0e; } }
+.qtile.leaving { transition: opacity .25s ease, transform .25s ease; opacity: 0; transform: scale(.96); }
+@media (prefers-reduced-motion: reduce) { .qtile.leaving { transition: none; } }

@@ -684,15 +684,23 @@
       b.onclick = async () => {
         const card = b.closest('.qtile');
         const title = $('h3', card).textContent;
-        if (!confirm(`Delete “${title}”? This can’t be undone.`)) return;
+        const ok = await askConfirm({ title: `Delete “${title}”?`, body: 'It’s removed for good, with its pictures. Copies other people saved from it stay theirs.', yes: 'Delete', danger: true });
+        if (!ok) return;
+        b.disabled = true;
         try {
           await api(`/api/quizzes/${b.dataset.del}/delete`, {});
           store.del(`blitz:draft:${b.dataset.del}`, localStorage);
           const c = store.get('blitz:me', localStorage);
           if (c) store.set('blitz:me', { ...c, quizzes: c.quizzes.filter((q) => q.id !== b.dataset.del) }, localStorage);
-          card.remove();
+          card.classList.add('leaving');
+          setTimeout(() => {
+            card.remove();
+            const n = app.querySelectorAll('.qtile[data-id]').length;
+            const badge = app.querySelector('.dash-sec .sec-head .count');
+            if (badge) { badge.textContent = n; bump(badge); }
+          }, 260);
           toast('Quiz deleted');
-        } catch (err) { toast(err.message); }
+        } catch (err) { b.disabled = false; toast(err.message); }
       };
     });
   }
@@ -802,6 +810,50 @@
       if (pin.length !== 6) return toast('A game PIN has 6 digits');
       go(`/play?pin=${pin}`);
     };
+  }
+
+  // ---------- confirm ----------
+  // Our own "Are you sure?" dialog. The browser's built-in confirm() can be switched off or silently
+  // answer "no" (in-app browsers, home-screen apps, "prevent this page from creating dialogs"), which
+  // made Delete do nothing. Resolves true or false.
+  function askConfirm({ title, body = '', yes = 'OK', no = 'Cancel', danger = false }) {
+    return new Promise((resolve) => {
+      const back = document.createElement('div');
+      back.className = 'sheet-back confirm-back';
+      back.innerHTML = `
+        <div class="sheet confirm" role="alertdialog" aria-modal="true" aria-labelledby="cf-h" aria-describedby="cf-b">
+          <div class="confirm-body"><h2 id="cf-h">${esc(title)}</h2>${body ? `<p id="cf-b">${esc(body)}</p>` : ''}</div>
+          <footer class="confirm-foot">
+            <button class="btn" data-a="no">${esc(no)}</button>
+            <button class="btn ${danger ? 'danger' : 'primary'}" data-a="yes">${esc(yes)}</button>
+          </footer>
+        </div>`;
+      const prev = document.activeElement;
+      const done = (v) => {
+        document.removeEventListener('keydown', key, true);
+        back.classList.add('out');
+        setTimeout(() => back.remove(), 180);
+        prev?.focus?.({ preventScroll: true });
+        resolve(v);
+      };
+      const key = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); done(false); }
+        if (e.key === 'Tab') {   // keep focus inside the dialog
+          const bs = [...back.querySelectorAll('button')];
+          const i = bs.indexOf(document.activeElement);
+          e.preventDefault();
+          bs[(i + (e.shiftKey ? -1 : 1) + bs.length) % bs.length].focus();
+        }
+      };
+      back.addEventListener('click', (e) => {
+        const a = e.target.closest('[data-a]');
+        if (a) done(a.dataset.a === 'yes');
+        else if (e.target === back) done(false);
+      });
+      document.addEventListener('keydown', key, true);
+      document.body.append(back);
+      back.querySelector('[data-a="no"]').focus({ preventScroll: true });   // the safe choice has focus
+    });
   }
 
   // ---------- import helpers ----------
