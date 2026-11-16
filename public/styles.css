@@ -75,8 +75,8 @@ em { font-style: normal; color: var(--accent); }  /* highlighted word: same face
    Text fields keep a plain native selection. */
 ::selection { background: transparent; color: var(--bg); }
 input::selection, textarea::selection { background: var(--accent); color: var(--bg); }
-.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop { isolation: isolate; }
-.linkcard, .chip, .pill, .ppin, .standing, .waiting-chip, .set-group, .ans { position: relative; }
+.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .lchip, .stat { isolation: isolate; }
+.linkcard, .chip, .pill, .ppin, .standing, .waiting-chip, .set-group, .ans, .lchip, .stat { position: relative; }
 .card { position: relative; }
 .hl-layer { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
 #hl { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
@@ -761,3 +761,101 @@ button.tile:active { transform: scale(.97); }
 @media (hover: hover) and (pointer: fine) {
   .nav .navlink:hover, .nav .btn:not(.primary):not(.nav-cta):hover, .nav .ghost:hover { color: var(--ink); background: rgba(246, 241, 233, .12); box-shadow: none; border: 0; }
 }
+
+/* ---------- celebrations: confetti, medals, a jumping winner ---------- */
+.confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 30; }
+.confetti i { position: absolute; top: -24px; left: var(--x); width: 10px; height: 16px; border-radius: 2px; background: var(--c);
+  transform: scale(var(--s)); opacity: 0; animation: fall var(--t) cubic-bezier(.25, .6, .4, 1) var(--d) both; }
+.confetti i.round { width: 11px; height: 11px; border-radius: 50%; }
+@keyframes fall {
+  0% { opacity: 1; transform: translate(0, 0) rotate(0) scale(var(--s)); }
+  85% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx), 108vh) rotate(var(--r)) scale(var(--s)); }
+}
+.medal { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; font: 800 22px/1 var(--display); color: var(--bg);
+  box-shadow: 0 6px 16px rgba(1, 16, 28, .45), inset 0 -3px 0 rgba(1, 16, 28, .18), inset 0 2px 0 rgba(255, 255, 255, .45); }
+.medal svg { width: 28px; height: 28px; }
+.medal.m1 { background: var(--accent); color: var(--wall); }
+.medal.m2 { background: var(--ice); }
+.medal.m3 { background: var(--sand); }
+
+.final-me { position: relative; }
+.final-me .medal { position: absolute; right: -6px; top: -6px; animation: bounce .5s var(--spring-bouncy, var(--ease)) .5s both; }
+.final-me.p1 .medal { width: 58px; height: 58px; }
+.final-me.p1 .medal svg { width: 34px; height: 34px; }
+.buddy.champ .buddy-art { width: 150px; height: 180px; }
+.buddy.champ.jump .buddy-art { animation: jump 1.1s var(--ease) .25s 3 both; transform-origin: 50% 100%; }
+@keyframes jump {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  15% { transform: translateY(0) scale(1.08, .9); }
+  45% { transform: translateY(-26px) scale(.96, 1.06) rotate(-4deg); }
+  70% { transform: translateY(0) scale(1.05, .95); }
+}
+.mega.glow.p1 { color: var(--accent); text-shadow: 0 0 60px rgba(255, 90, 31, .45); }
+.mega.glow.p2 { color: var(--ice); }
+.mega.glow.p3 { color: var(--sand); }
+.standing.big { font: 800 26px/1 var(--display); padding: 14px 24px; }
+.lifetime { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.lchip { display: inline-flex; align-items: center; gap: 6px; height: var(--ctl-sm); padding: 0 16px; border-radius: 999px; background: var(--solid); border: 1.5px solid var(--edge-soft); font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums; }
+.lchip b { font-family: var(--display); }
+.lchip.hot { background: var(--accent); border-color: transparent; color: var(--wall); }
+.page.center .cta.end { margin-top: 8px; }
+
+/* podium steps carry their character and a medal */
+.step-art { position: relative; justify-self: center; margin-bottom: 4px; }
+.step-art .buddy-art { width: 92px; height: 110px; display: block; animation: hop .6s var(--ease) both; }
+.s1 .step-art .buddy-art { width: 120px; height: 144px; animation-delay: .5s; }
+.s2 .step-art .buddy-art { animation-delay: .3s; }
+.s3 .step-art .buddy-art { animation-delay: .4s; }
+.step-art .medal { position: absolute; right: -10px; bottom: 4px; width: 38px; height: 38px; font-size: 18px; }
+.step-art .medal svg { width: 22px; height: 22px; }
+.step.you strong { color: var(--vermilion-hi); }
+
+/* ---------- dashboard stats ---------- */
+.stats { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 12px; padding: 22px; align-items: stretch; }
+.stat-hero { display: grid; align-content: center; justify-items: start; gap: 8px; padding: 8px 12px; }
+.stat-hero b { font: 800 clamp(48px, 7vw, 72px)/.95 var(--display); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.rankchip { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--wall); font-weight: 700; font-size: 14px; }
+.stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { display: grid; align-content: center; gap: 4px; padding: 14px 16px; border-radius: 16px; background: var(--solid); border: 1.5px solid var(--edge-soft); min-width: 0; }
+.stat b { font: 800 26px/1 var(--display); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.stat span { color: var(--mute); font-size: 13px; font-weight: 600; }
+.stats-empty { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; padding: 22px; }
+.stats-empty p { color: var(--mute); max-width: 52ch; }
+
+/* ---------- leaderboard ---------- */
+.lb-podium { margin-top: 24px; }
+.lboard { width: min(640px, 100%); margin: 32px auto 0; padding: 12px 22px; }
+.lboard li { gap: 14px; }
+.lboard .rank { width: 30px; text-align: center; }
+.lb-art .buddy-art { width: 40px; height: 48px; display: block; }
+.lb-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.lb-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-main small { color: var(--mute); font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lboard .score { font: 800 20px var(--display); }
+.lboard li.you { margin: 0 -12px; padding: 10px 12px; border-radius: 14px; border-bottom-color: transparent; background: rgba(255, 90, 31, .16); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.lboard li.gap { justify-content: center; color: var(--mute); letter-spacing: .3em; padding: 2px; }
+.hint.center { text-align: center; margin-top: 24px; }
+.lb .stats-empty { margin-top: 24px; }
+
+@media (max-width: 720px) {
+  .stats { grid-template-columns: minmax(0, 1fr); padding: 18px; }
+  .stat-hero { padding: 4px; }
+}
+@media (max-width: 480px) {
+  .nav .navlink.wide { display: none; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat b { font-size: 22px; }
+  .step-art .buddy-art { width: 64px; height: 77px; }
+  .s1 .step-art .buddy-art { width: 84px; height: 101px; }
+  .step-art .medal { width: 30px; height: 30px; font-size: 15px; right: -6px; }
+  .step-art .medal svg { width: 18px; height: 18px; }
+  .buddy.champ .buddy-art { width: 124px; height: 149px; }
+  .lboard { padding: 8px 14px; }
+  .lb-art .buddy-art { width: 34px; height: 41px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .buddy.champ.jump .buddy-art, .step-art .buddy-art, .final-me .medal { animation: none !important; }
+}
+.step .step-art .medal { color: var(--bg); margin: 0; font-weight: 800; }  /* beat the podium's ".step span" text style */
+.step .step-art .medal.m1 { color: var(--wall); }

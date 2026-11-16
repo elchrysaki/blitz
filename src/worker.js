@@ -14,7 +14,14 @@ const DAY = 86400;
 const WEEK = 7 * DAY;
 const GAME_TTL = 4 * 3600; // a live game lasts at most 4 hours
 const QUIZ_TTL = 15 * DAY;
-const PLAYED_TTL = 14 * DAY; // games you joined stay in "Recently played" for 14 days // a quiz nobody has played or edited for 15 days is deleted
+// Lifetime stats: everything a browser earns is kept as long as the browser is remembered (7 days
+// after its last visit, renewed on every visit); when it's forgotten, its stats go too.
+const RATING = "(points + 1000 * wins + 300 * podiums)"; // Blitz rating: points, plus 1,000 a win, 300 a 2nd/3rd place
+const RATED_MIN_PLAYERS = 2;                            // solo games don't count, so nobody can farm wins alone
+const statsOf = (u) => {
+  const games = u?.games || 0, points = u?.points || 0, wins = u?.wins || 0, podiums = u?.podiums || 0;
+  return { games, points, wins, podiums, best: u?.best || 0, rating: points + 1000 * wins + 300 * podiums };
+}; // a quiz nobody has played or edited for 15 days is deleted
 const COVER = 999;         // picture slot for the quiz's intro picture
 const COOKIE = "blitz_uid";
 const TIMES = [10, 20, 30, 60];
@@ -265,7 +272,6 @@ async function prune(env) {
   const stale = await env.DB.prepare("SELECT uid FROM users WHERE seen < ? LIMIT 500").bind(now() - WEEK).all();
   for (const { uid } of stale.results) await forget(env, uid);
   await pruneQuizzes(env);
-  await env.DB.prepare("DELETE FROM played WHERE at < ?").bind(now() - PLAYED_TTL).run();
   await env.DB.prepare("DELETE FROM games WHERE created < ?").bind(now() - DAY).run();
 }
 
@@ -274,14 +280,14 @@ async function getMe(env, uid) {
   // One round trip to D1: read the last visit, the quizzes, live games and history,
   // and (only if this browser has anything) extend its 7 days.
   const [userRows, quizRows, liveRows, playedRows] = await env.DB.batch([
-    env.DB.prepare("SELECT seen FROM users WHERE uid = ?").bind(uid),
+    env.DB.prepare("SELECT seen, games, points, wins, podiums, best FROM users WHERE uid = ?").bind(uid),
     env.DB.prepare("SELECT id, title, questions, v, cover, updated, plays, last_played FROM quizzes WHERE owner = ?").bind(uid),
     env.DB.prepare("SELECT quiz_id FROM games WHERE owner = ? AND done = 0 AND created > ?").bind(uid, t - GAME_TTL),
     env.DB.prepare(
       "SELECT p.*, g.gid AS live_gid FROM played p " +
       "LEFT JOIN games g ON g.gid = p.gid AND g.done = 0 AND g.created > ? " +
-      "WHERE p.uid = ? AND p.at > ? ORDER BY p.at DESC LIMIT 30",
-    ).bind(t - GAME_TTL, uid, t - PLAYED_TTL),
+      "WHERE p.uid = ? ORDER BY p.at DESC LIMIT 50",
+    ).bind(t - GAME_TTL, uid),
   ]);
   const user = userRows.results[0];
   if (user && user.seen < t - WEEK) { // not seen for 7 days: forget them
@@ -303,10 +309,34 @@ async function getMe(env, uid) {
     id: e.gid, pin: e.pin, quizTitle: e.quiz_title, name: e.name, at: e.at, score: e.score,
     rank: e.place, count: e.players, done: !!e.done, live: !!e.live_gid,
   }));
-  const any = quizzes.length > 0 || played.length > 0;
+  const any = quizzes.length > 0 || played.length > 0 || (user?.games || 0) > 0;
   // Visiting the dashboard keeps everything for another 7 days. Skip the write if it was refreshed in the last hour.
   if (any && !(user && user.seen > t - 3600)) await upsertUser(env, uid).run();
-  return json({ quizzes, played, expires: any ? t + WEEK : null });
+  const stats = statsOf(user);
+  if (stats.games) {
+    const r = await env.DB.prepare(`SELECT COUNT(*) AS ahead FROM users WHERE games > 0 AND ${RATING} > ?`).bind(stats.rating).first();
+    stats.rank = (r?.ahead || 0) + 1;
+  }
+  return json({ quizzes, played, stats, expires: any ? t + WEEK : null });
+}
+
+// The global leaderboard: the top 50 browsers by Blitz rating, plus where you stand.
+async function leaderboard(env, uid) {
+  const [top, mine, count] = await env.DB.batch([
+    env.DB.prepare(`SELECT uid, name, look, games, points, wins, podiums, best, ${RATING} AS rating FROM users
+      WHERE games > 0 ORDER BY rating DESC, wins DESC, games ASC LIMIT 50`),
+    env.DB.prepare("SELECT name, look, games, points, wins, podiums, best FROM users WHERE uid = ?").bind(uid),
+    env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE games > 0"),
+  ]);
+  const row = (r, i) => ({ rank: i + 1, name: r.name || "Player", look: r.look, ...statsOf(r), you: r.uid === uid });
+  const me = mine.results[0];
+  let you = null;
+  if (me && me.games) {
+    const st = statsOf(me);
+    const r = await env.DB.prepare(`SELECT COUNT(*) AS ahead FROM users WHERE games > 0 AND ${RATING} > ?`).bind(st.rating).first();
+    you = { rank: (r?.ahead || 0) + 1, name: me.name || "You", look: me.look, ...st, you: true };
+  }
+  return json({ players: top.results.map(row), you, total: count.results[0]?.n || 0 });
 }
 
 // ---------- API ----------
@@ -319,6 +349,7 @@ async function handleApi(request, env, url, uid) {
   if (request.method === "GET") {
     if (path === "/api/info") return json({ lanUrl: null });
     if (path === "/api/me") return getMe(env, uid);
+    if (path === "/api/leaderboard") return leaderboard(env, uid);
     if (path === "/api/stream") {
       const pin = text(url.searchParams.get("pin"));
       if (!PIN_RE.test(pin)) return new Response('data: {"t":"ended"}\n\n', { headers: SSE_HEADERS });
@@ -450,7 +481,9 @@ async function act(env, body) {
 let schemaReady = null;
 function ensureSchema(env) {
   schemaReady ??= env.DB.batch([
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS users (uid TEXT PRIMARY KEY, seen REAL NOT NULL)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS users (uid TEXT PRIMARY KEY, seen REAL NOT NULL, name TEXT, look TEXT, " +
+      "games INTEGER NOT NULL DEFAULT 0, points INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0, " +
+      "podiums INTEGER NOT NULL DEFAULT 0, best INTEGER NOT NULL DEFAULT 0)"),
     env.DB.prepare(
       "CREATE TABLE IF NOT EXISTS quizzes (id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL, " +
       "questions TEXT NOT NULL, v INTEGER NOT NULL, created REAL NOT NULL, updated REAL NOT NULL, " +
@@ -474,6 +507,10 @@ function ensureSchema(env) {
   ])
     // Databases made before intro pictures existed get the column added; "duplicate column" means it's already there.
     .then(() => env.DB.prepare("ALTER TABLE quizzes ADD COLUMN cover INTEGER NOT NULL DEFAULT 0").run().catch(() => {}))
+    // Lifetime stats columns for databases made before the leaderboard existed ("duplicate column" = already there).
+    .then(() => Promise.all([["name", "TEXT"], ["look", "TEXT"], ["games", "INTEGER NOT NULL DEFAULT 0"], ["points", "INTEGER NOT NULL DEFAULT 0"],
+      ["wins", "INTEGER NOT NULL DEFAULT 0"], ["podiums", "INTEGER NOT NULL DEFAULT 0"], ["best", "INTEGER NOT NULL DEFAULT 0"]]
+      .map(([c, type]) => env.DB.prepare(`ALTER TABLE users ADD COLUMN ${c} ${type}`).run().catch(() => {}))))
     .catch((err) => {
       schemaReady = null; // retry on the next request
       throw err;
@@ -688,6 +725,11 @@ export class GameRoom extends DurableObject {
       ...board.map((row, i) =>
         db.prepare("UPDATE played SET score = ?, place = ?, players = ?, done = 1 WHERE uid = ? AND gid = ?")
           .bind(row.score, i + 1, board.length, s.players[row.id].uid, s.gid)),
+      // Lifetime stats (games with at least 2 players only): name and look from this game, totals added up.
+      ...(board.length < RATED_MIN_PLAYERS ? [] : board.map((row, i) =>
+        db.prepare("UPDATE users SET name = ?, look = ?, games = games + 1, points = points + ?, wins = wins + ?, " +
+          "podiums = podiums + ?, best = MAX(best, ?) WHERE uid = ?")
+          .bind(row.name, row.look || null, row.score, i === 0 ? 1 : 0, i === 1 || i === 2 ? 1 : 0, row.score, s.players[row.id].uid))),
     ]);
   }
 

@@ -17,10 +17,17 @@ Each quiz can also have an **intro picture**, added under the title in the edito
 
 Each browser gets a private random cookie (`blitz_uid`, HttpOnly). Everything tied to it is kept for **7 days after your last visit**, and every visit adds another 7 days:
 
-- **Dashboard** (`/dashboard`): your quizzes, with Host, Edit and Delete. Below them, the games you joined in the last 14 days, with your rank and score. While a game still exists (its lobby is open or it is running), its row shows the PIN and tapping it takes you straight back in.
+- **Dashboard** (`/dashboard`): your lifetime stats (Blitz rating, world rank, games, wins, 2nd/3rd places, total points, best game, win rate), then your quizzes, with Host, Edit and Delete. Below them, every game you joined (the latest 50), with your rank and score. While a game still exists (its lobby is open or it is running), its row shows the PIN and tapping it takes you straight back in.
 - Quizzes can only be edited, hosted or deleted from the browser that made them.
-- After 7 days without a visit, the server forgets that browser and deletes its quizzes.
+- After 7 days without a visit, the server forgets that browser and deletes everything tied to it: its quizzes, its history and its stats (which also takes it off the leaderboard).
 - **Quizzes nobody plays for 15 days are deleted** with their pictures, to save space. The 15 days count from the later of the last finished game and the last edit. A quiz with a game running right now is never deleted. In the last 5 days, the dashboard shows "Deleted in N days unless it's played".
+
+## Stats and leaderboard
+
+- When a game with **at least 2 players** ends, each player's lifetime stats go up: games, points, wins, 2nd/3rd places and best game. Solo games don't count, so nobody can farm wins alone. The leaderboard shows the name and character from each player's latest game.
+- **Blitz rating** = every point scored + 1,000 per win + 300 per 2nd or 3rd place.
+- **Leaderboard** (`/leaderboard`, `GET /api/leaderboard`): the top 50 by rating with a podium for the top 3, your own row highlighted, and your rank even if you're outside the top 50.
+- **Win screen:** players get confetti, a medal or trophy for the top 3, their character jumping, a points count-up, and their new rating and world rank. The host's podium shows each winner's character and medal.
 
 ## Online: Cloudflare
 
@@ -28,7 +35,7 @@ The live site runs on Cloudflare Workers (worker `blitz`):
 
 - **Worker** (`src/worker.js`): the `/api/*` routes. The files in `public/` are served as static assets, and app routes such as `/dashboard` fall back to `index.html`.
 - **Durable Object** `GameRoom`: one per game PIN. It holds the players, the question timer (an alarm) and the scores, and streams updates to every screen over server-sent events.
-- **D1** database `blitz-db`: quizzes, pictures, browsers (cookie IDs and last visit), play history and game PINs. The tables are created automatically on first use.
+- **D1** database `blitz-db`: quizzes, pictures, browsers (cookie IDs, last visit and lifetime stats), play history and game PINs. The tables are created automatically on first use.
 - **Cron** (daily, 03:17 UTC): forgets browsers that haven't visited for 7 days, deletes quizzes idle for 15 days, and removes old PINs. (Locally, `server.py` does the same at startup and then every hour.)
 
 Deploys happen through **Cloudflare Workers Builds**, which is connected to this GitHub repo. Every push to `main` runs `npx wrangler deploy`. To deploy by hand from a machine with Node.js:

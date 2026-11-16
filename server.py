@@ -28,7 +28,7 @@ os.makedirs(QUIZZES, exist_ok=True)
 os.makedirs(USERS, exist_ok=True)
 
 WEEK = 7 * 24 * 3600
-PLAYED_TTL = 14 * 24 * 3600  # games you joined stay in "Recently played" for 14 days
+RATED_MIN_PLAYERS = 2  # solo games don't count toward lifetime stats, so nobody can farm wins alone
 QUIZ_TTL = 15 * 24 * 3600  # a quiz nobody has played or edited for 15 days is deleted
 COVER = 999                # picture slot for the quiz's intro picture
 COOKIE = "blitz_uid"
@@ -40,7 +40,7 @@ KEEP_RE = re.compile(r"^/api/quizzes/([\w-]+)/image/(\d+)(?:\?v=\d+)?$")  # "kee
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,40}$")
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{32}$")
 TIMES = (10, 20, 30, 60)
-SPA = ("/", "/create", "/play", "/dashboard")
+SPA = ("/", "/create", "/play", "/dashboard", "/leaderboard")
 
 LOCK = threading.RLock()
 GAMES = {}  # pin -> Game
@@ -279,7 +279,7 @@ def load_user(uid):
 
 def save_user(uid, u):
     u["seen"] = time.time()
-    u["played"] = [e for e in u["played"] if e["at"] > time.time() - PLAYED_TTL][:30]
+    u["played"] = u["played"][:50]  # history is kept as long as the browser is remembered
     write_json(user_path(uid), u)
 
 
@@ -303,6 +303,30 @@ def touch_user(uid):
         u = load_user(uid)
         if u["created"] or u["played"]:
             save_user(uid, u)
+
+
+def stats_of(u):
+    """Lifetime stats. Blitz rating = points, plus 1,000 a win, plus 300 a 2nd or 3rd place."""
+    st = u.get("stats") or {}
+    out = {k: st.get(k, 0) for k in ("games", "points", "wins", "podiums", "best")}
+    out["rating"] = out["points"] + 1000 * out["wins"] + 300 * out["podiums"]
+    return out
+
+
+def ranked_users():
+    """Everyone with at least one rated game, best first (only ever run locally, so a file scan is fine)."""
+    rows = []
+    for name in os.listdir(USERS):
+        if not name.endswith(".json"):
+            continue
+        uid = name[:-5]
+        u = load_user(uid)
+        st = stats_of(u)
+        if st["games"]:
+            rows.append(dict(st, uid=uid, name=(u.get("stats") or {}).get("name") or "Player",
+                             look=(u.get("stats") or {}).get("look")))
+    rows.sort(key=lambda r: (-r["rating"], -r["wins"], r["games"]))
+    return rows
 
 
 def prune_users():
@@ -424,6 +448,14 @@ class Game:
             for e in u["played"]:
                 if e["id"] == self.gid:
                     e.update(score=row["score"], rank=rank, count=len(board), done=True)
+            if len(board) >= RATED_MIN_PLAYERS:
+                st = u.setdefault("stats", {})
+                st["name"], st["look"] = row["name"], row.get("look")
+                st["games"] = st.get("games", 0) + 1
+                st["points"] = st.get("points", 0) + row["score"]
+                st["wins"] = st.get("wins", 0) + (rank == 1)
+                st["podiums"] = st.get("podiums", 0) + (rank in (2, 3))
+                st["best"] = max(st.get("best", 0), row["score"])
             save_user(uid, u)
 
     # -- snapshots --
@@ -597,6 +629,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/me":
                 with LOCK:
                     return self.get_me()
+            if path == "/api/leaderboard":
+                with LOCK:
+                    return self.get_leaderboard()
             if path == "/api/stream":
                 return self.stream(qs)
             m = re.match(r"^/api/quizzes/([\w-]+)/image/(\d+)$", path)
@@ -662,8 +697,23 @@ class Handler(BaseHTTPRequestHandler):
             played.append(dict(e, live=bool(g and g.gid == e["id"] and g.phase != "final")))
         if u["created"] or u["played"]:
             save_user(self.uid, u)  # visiting the dashboard keeps everything for another 7 days
-        self.send_json(200, {"quizzes": mine, "played": played,
+        stats = stats_of(u)
+        if stats["games"]:
+            stats["rank"] = 1 + sum(1 for r in ranked_users() if r["rating"] > stats["rating"])
+        self.send_json(200, {"quizzes": mine, "played": played, "stats": stats,
                              "expires": time.time() + WEEK if (u["created"] or u["played"]) else None})
+
+    def get_leaderboard(self):
+        rows = ranked_users()
+        players = [dict({k: v for k, v in r.items() if k != "uid"}, rank=i + 1, you=r["uid"] == self.uid)
+                   for i, r in enumerate(rows[:50])]
+        you = None
+        u = load_user(self.uid)
+        st = stats_of(u)
+        if st["games"]:
+            you = dict(st, rank=1 + sum(1 for r in rows if r["rating"] > st["rating"]), you=True,
+                       name=(u.get("stats") or {}).get("name") or "You", look=(u.get("stats") or {}).get("look"))
+        self.send_json(200, {"players": players, "you": you, "total": len(rows)})
 
     def stream(self, qs):
         self.send_response(200)

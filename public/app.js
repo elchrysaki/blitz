@@ -221,6 +221,7 @@
     <header class="nav">
       <a class="logo" href="/" data-link aria-label="Blitz home"><span>blitz<i>.</i></span></a>
       <a class="navlink ${location.pathname === '/dashboard' ? 'on' : ''}" href="/dashboard" data-link>Dashboard</a>
+      <a class="navlink wide ${location.pathname === '/leaderboard' ? 'on' : ''}" href="/leaderboard" data-link>Leaderboard</a>
       <span class="grow"></span>${right}
     </header>`;
 
@@ -238,6 +239,30 @@
   const boardRows = (players, limit) => players.slice(0, limit).map((p, i) => `
     <li><span class="rank">${i + 1}</span><span class="name">${esc(p.name)}</span>
       ${p.gained ? `<span class="gain">+${fmt(p.gained)}</span>` : ''}<span class="score">${fmt(p.score)}</span></li>`).join('');
+
+  // ---------- celebrations ----------
+  const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // A one-off shower of paper in the four answer colours (pure CSS; nothing runs once it has landed).
+  const confetti = (n = 70) => calm() ? '' : `<div class="confetti" aria-hidden="true">${Array.from({ length: n }, (_, i) => {
+    const r = (k) => (Math.sin((i + 1) * 9301 + k * 49297) * 233280) % 1;        // steady pseudo-random, no flicker on redraws
+    const a = Math.abs;
+    return `<i style="--x:${(a(r(1)) * 100).toFixed(1)}vw;--dx:${(r(2) * 18).toFixed(1)}vw;--d:${(a(r(3)) * .9).toFixed(2)}s;--t:${(2.4 + a(r(4)) * 1.6).toFixed(2)}s;--s:${(.6 + a(r(5)) * .7).toFixed(2)};--r:${Math.round(r(6) * 900)}deg;--c:var(--${'abcd'[i % 4]})" class="${i % 3 ? '' : 'round'}"></i>`;
+  }).join('')}</div>`;
+  // Count a number up from 0 (eased), or just show it when motion is reduced.
+  function countUp(el, to, ms = 1200) {
+    if (!el) return;
+    if (calm() || !to) { el.textContent = fmt(to); return; }
+    const t0 = performance.now();
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / ms);
+      el.textContent = fmt(Math.round(to * (1 - Math.pow(1 - k, 3))));
+      if (k < 1 && el.isConnected) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  const TROPHY = `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M18 8h28v14a14 14 0 0 1-28 0z" fill="currentColor"/><path d="M18 13H9a9 9 0 0 0 11 13M46 13h9a9 9 0 0 1-11 13" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M28 35h8v10h-8z" fill="currentColor"/><rect x="20" y="45" width="24" height="8" rx="3" fill="currentColor"/><path d="M25 14v8a7 7 0 0 0 4 6" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="3" stroke-linecap="round"/></svg>`;
+  const medal = (place) => place === 1 ? `<span class="medal m1">${TROPHY}</span>` : place <= 3 ? `<span class="medal m${place}">${place}</span>` : '';
+  const RATING_RULE = 'Your rating is every point you’ve scored, plus 1,000 for each win and 300 for each 2nd or 3rd place. Only games with at least 2 players count.';
 
   // ---------- router ----------
 
@@ -257,6 +282,7 @@
     if (p === '/create') return viewCreate();
     if (p === '/play') return viewPlay();
     if (p === '/dashboard') return viewDashboard();
+    if (p === '/leaderboard') return viewLeaderboard();
     let m = p.match(/^\/host\/([\w-]+)$/);
     if (m) return viewHost(m[1]);
     m = p.match(/^\/edit\/([\w-]+)$/);
@@ -342,15 +368,96 @@
     } catch (err) { if (alive && !cached) toast(err.message); }
   }
 
+  // Lifetime stats on the dashboard: rating and world rank up top, the counts beside them.
+  function statsCard(st) {
+    if (!st || !st.games) return `
+      <section class="dash-sec">
+        <div class="sec-head"><h2>Your stats</h2></div>
+        <div class="card stats-empty"><p>Finish a game with at least one other player and your rating, wins and podiums start counting here.</p>
+          <a class="btn small" href="/leaderboard" data-link>See the leaderboard</a></div>
+      </section>`;
+    const tile = (n, label) => `<div class="stat"><b>${n}</b><span>${label}</span></div>`;
+    return `
+      <section class="dash-sec">
+        <div class="sec-head"><h2>Your stats</h2><span class="grow"></span><a class="ghost" href="/leaderboard" data-link>Leaderboard →</a></div>
+        <div class="card stats">
+          <div class="stat-hero">
+            <span class="eyebrow">Blitz rating</span>
+            <b>${fmt(st.rating)}</b>
+            <span class="rankchip">#${fmt(st.rank || 1)} worldwide</span>
+          </div>
+          <div class="stat-grid">
+            ${tile(fmt(st.games), st.games === 1 ? 'game' : 'games')}
+            ${tile(fmt(st.wins), st.wins === 1 ? 'win' : 'wins')}
+            ${tile(fmt(st.podiums), '2nd & 3rd')}
+            ${tile(fmt(st.points), 'total points')}
+            ${tile(fmt(st.best), 'best game')}
+            ${tile(st.games ? Math.round((st.wins / st.games) * 100) + '%' : '–', 'win rate')}
+          </div>
+        </div>
+      </section>`;
+  }
+
+  // ---------- leaderboard ----------
+
+  async function viewLeaderboard() {
+    let alive = true;
+    cleanup = () => { alive = false; };
+    const CACHE = 'blitz:lb';
+    const draw = (d) => {
+      const [p1, p2, p3] = d.players;
+      const step = (p, place) => p ? `
+        <div class="step s${place} ${p.you ? 'you' : ''}">
+          <div class="step-art">${avatar(p.look || p.name)}${medal(place)}</div>
+          <strong ${p.you ? 'title="You"' : ''}>${esc(p.name)}</strong><span>${fmt(p.rating)}</span>
+          <div class="block">${place}</div>
+        </div>` : '<div class="step"></div>';
+      const row = (p) => `
+        <li class="${p.you ? 'you' : ''}">
+          <span class="rank">${p.rank}</span>
+          <span class="lb-art">${avatar(p.look || p.name)}</span>
+          <span class="lb-main"><strong>${esc(p.name)}${p.you ? ' · you' : ''}</strong>
+            <small>${fmt(p.games)} game${p.games === 1 ? '' : 's'} · ${fmt(p.wins)} win${p.wins === 1 ? '' : 's'} · ${fmt(p.podiums)} podium${p.podiums === 1 ? '' : 's'}</small></span>
+          <span class="score">${fmt(p.rating)}</span>
+        </li>`;
+      const youOutside = d.you && !d.players.some((p) => p.you);
+      app.innerHTML = `
+        <main class="page lb">
+          ${nav('<a class="btn primary small" href="/play" data-link>Join a game</a>')}
+          <section class="create-head">
+            <p class="eyebrow">Everyone, everywhere</p>
+            <h1 class="display">Global <em>leaderboard.</em></h1>
+            <p class="lede">${d.total ? `${fmt(d.total)} player${d.total === 1 ? '' : 's'} ranked. ` : ''}${RATING_RULE}</p>
+          </section>
+          ${d.players.length ? `
+            <div class="podium lb-podium">${step(p2, 2)}${step(p1, 1)}${step(p3, 3)}</div>
+            ${d.players.length > 3 || youOutside ? `<ol class="card board lboard">${d.players.slice(3).map(row).join('')}${youOutside ? `<li class="gap" aria-hidden="true">···</li>${row(d.you)}` : ''}</ol>` : ''}
+            ${d.you ? '' : '<p class="hint center">Finish a game with at least one other player to get on the board.</p>'}`
+          : `<div class="card stats-empty"><p>Nobody’s on the board yet. Finish a game with at least one other player to be the first.</p>
+              <a class="btn primary small" href="/create" data-link>Make a quiz</a></div>`}
+          <p class="hint center">Stats belong to this browser and are kept as long as it’s remembered (7 days after your last visit).</p>
+        </main>`;
+    };
+    const cached = store.get(CACHE, localStorage);
+    if (cached) draw(cached);
+    else app.innerHTML = `<main class="page lb">${nav()}<div class="solo"><p class="lede">Loading<span class="dots"></span></p></div></main>`;
+    try {
+      const d = await api('/api/leaderboard');
+      store.set(CACHE, d, localStorage);
+      if (alive && JSON.stringify(d) !== JSON.stringify(cached)) { draw(d); if (cached) app.firstElementChild.style.animation = 'none'; }
+    } catch (err) { if (alive && !cached) toast(err.message); }
+  }
+
   function drawDashboard(me, quizCard, playedRow) {
     app.innerHTML = `
       <main class="page dash">
         ${nav('<a class="btn primary small" href="/create" data-link>New quiz</a>')}
         <section class="create-head">
           <p class="eyebrow">Your dashboard</p>
-          <h1 class="display">${me.quizzes.length || me.played.length ? 'Welcome <em>back.</em>' : 'Nothing here <em>yet.</em>'}</h1>
-          <p class="lede">No sign-in needed. This browser is remembered for 7 days after your last visit, and each visit adds another 7.</p>
+          <h1 class="display">${me.quizzes.length || me.played.length || me.stats?.games ? 'Welcome <em>back.</em>' : 'Nothing here <em>yet.</em>'}</h1>
+          <p class="lede">No sign-in needed. This browser is remembered for 7 days after your last visit, and each visit adds another 7. Your stats stay as long as it’s remembered.</p>
         </section>
+        ${statsCard(me.stats)}
         <section class="dash-sec">
           <div class="sec-head"><h2>My quizzes</h2><span class="count">${me.quizzes.length}</span></div>
           <div class="qgrid">
@@ -361,7 +468,7 @@
         <section class="dash-sec">
           <div class="sec-head"><h2>Recently played</h2><span class="count">${me.played.length}</span></div>
           ${me.played.length ? `<ul class="card plist">${me.played.map(playedRow).join('')}</ul>
-            <p class="hint">Games you joined in the last 14 days. Tap a live one to jump back in.</p>`
+            <p class="hint">Every game you’ve joined from this browser. Tap a live one to jump back in.</p>`
             : '<p class="empty">Games you join from this browser show up here.</p>'}
         </section>
       </main>`;
@@ -1171,6 +1278,7 @@
       const order = [top[1], top[0], top[2]];
       app.innerHTML = `
         <main class="page final">
+          ${confetti()}
           ${nav(`<span class="pill">${esc(s.quizTitle)}</span>`)}
           <section class="final-head">
             <p class="eyebrow">Final standings</p>
@@ -1179,6 +1287,7 @@
           <div class="podium">
             ${order.map((p, i) => (p ? `
               <div class="step s${[2, 1, 3][i]}">
+                <div class="step-art">${avatar(p.look || p.name)}${medal([2, 1, 3][i])}</div>
                 <strong>${esc(p.name)}</strong><span>${fmt(p.score)}</span>
                 <div class="block">${[2, 1, 3][i]}</div>
               </div>` : '<div class="step"></div>')).join('')}
@@ -1187,6 +1296,7 @@
             <li><span class="rank">${i + 4}</span><span class="name">${esc(p.name)}</span><span class="score">${fmt(p.score)}</span></li>`).join('')}</ol>` : ''}
           <div class="cta end">
             <button class="btn primary" id="again">Play again</button>
+            <a class="btn" href="/leaderboard" data-link>Leaderboard</a>
             <a class="btn" href="/" data-link>Done</a>
           </div>
         </main>`;
@@ -1471,12 +1581,46 @@
           <p class="standing">${ordinal(s.rank)} of ${s.count} · ${fmt(s.score)} pts</p>`);
       }
 
+      // Final: the bigger the finish, the bigger the party.
+      const place = s.rank;
+      const podium = place <= 3 && s.count > 1;
+      const line = s.count < 2 ? 'Solo run complete.'
+        : place === 1 ? 'You won. Take a bow.'
+        : place === 2 ? 'Silver! So close to the top.'
+        : place === 3 ? 'Bronze — you made the podium.'
+        : place <= Math.ceil(s.count / 2) ? `Top half of ${s.count}. Nice run.`
+        : `${ordinal(place)} of ${s.count}. Run it back?`;
+      buzz(podium ? [20, 80, 20, 80, 60] : 30);
       centered(`
+        ${podium || s.count < 2 ? confetti(place === 1 ? 90 : 50) : ''}
+        <div class="final-me ${podium ? `p${place}` : ''}">
+          ${buddy(s.name, s.look, `me champ ${podium ? 'jump' : ''}`)}
+          ${podium ? medal(place) : ''}
+        </div>
         <p class="eyebrow">Final result</p>
-        <h1 class="mega small">${ordinal(s.rank)}</h1>
-        <p class="lede">${s.rank === 1 ? 'You won. Take a bow.' : `out of ${s.count} players`}</p>
-        <p class="standing">${fmt(s.score)} pts</p>
-        <a class="btn" href="/" data-link>Done</a>`);
+        <h1 class="mega small ${podium ? `glow p${place}` : ''}">${ordinal(place)}</h1>
+        <p class="lede">${line}</p>
+        <p class="standing big"><span id="pts">0</span> pts</p>
+        <div class="lifetime" id="life" hidden></div>
+        <div class="cta end">
+          <a class="btn primary" href="/leaderboard" data-link>See leaderboard</a>
+          <a class="btn" href="/" data-link>Done</a>
+        </div>`);
+      countUp($('#pts'), s.score);
+      // The server adds this game to your lifetime stats as it ends; show what it did for you.
+      const life = $('#life');
+      setTimeout(() => api('/api/me').then((me) => {
+        const st = me.stats;
+        if (!alive || !life.isConnected || !st) return;
+        store.set('blitz:me', me, localStorage);
+        life.innerHTML = s.count < 2
+          ? '<span class="lchip">Solo games don’t count toward the leaderboard</span>'
+          : st.games ? `${place === 1 ? `<span class="lchip hot">Win #${fmt(st.wins)}</span>` : ''}
+            <span class="lchip">Rating <b>${fmt(st.rating)}</b></span>
+            <span class="lchip">#${fmt(st.rank || 1)} worldwide</span>
+            ${st.best === s.score && st.games > 1 ? '<span class="lchip hot">New personal best</span>' : ''}` : '';
+        if (life.innerHTML.trim()) { life.hidden = false; bump(life); }
+      }).catch(() => {}), 900);
     }
 
     const session = store.get(sessionKey);
@@ -1497,7 +1641,7 @@
   // surface its line sits on (card, tile, nav, or the page), above that surface's background
   // and below its text. Only does work while something is selected.
   // Anything with its own solid background is a surface: the pill goes above that background, under its text.
-  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox';
+  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat';
   const pageLayer = document.createElement('div');
   pageLayer.id = 'hl';
   pageLayer.setAttribute('aria-hidden', 'true');
