@@ -222,7 +222,8 @@
     <header class="nav">
       <a class="logo" href="/" data-link aria-label="Blitz home"><span>blitz<i>.</i></span></a>
       <a class="navlink ${location.pathname === '/dashboard' ? 'on' : ''}" href="/dashboard" data-link>Dashboard</a>
-      <a class="navlink wide ${location.pathname === '/leaderboard' ? 'on' : ''}" href="/leaderboard" data-link>Leaderboard</a>
+      <a class="navlink wide ${location.pathname === '/explore' ? 'on' : ''}" href="/explore" data-link>Explore</a>
+      <a class="navlink wide wider ${location.pathname === '/leaderboard' ? 'on' : ''}" href="/leaderboard" data-link>Leaderboard</a>
       <span class="grow"></span>${right}
     </header>`;
 
@@ -363,6 +364,7 @@
     if (p === '/play') return viewPlay();
     if (p === '/dashboard') return viewDashboard();
     if (p === '/leaderboard') return viewLeaderboard();
+    if (p === '/explore') return viewExplore();
     let m = p.match(/^\/host\/([\w-]+)$/);
     if (m) return viewHost(m[1]);
     m = p.match(/^\/edit\/([\w-]+)$/);
@@ -394,11 +396,12 @@
         <a class="cover" href="/host/${q.id}" data-link>
           ${q.cover ? `<img src="${q.cover}" alt="" loading="lazy" decoding="async">` : `<span class="cover-fallback">${esc(q.title.slice(0, 1).toUpperCase())}</span>`}
           ${q.live ? '<span class="livebadge">Live now</span>' : ''}
+          ${q.public ? '<span class="pubbadge">Public</span>' : ''}
         </a>
         <div class="qtile-body">
           <h3>${esc(q.title)}</h3>
           <p class="meta">${q.questions} question${q.questions === 1 ? '' : 's'}${q.pins ? ` · ${q.pins} pin` : ''} · ${
-            q.plays ? `played ${q.plays}×` : 'not played yet'}</p>
+            q.plays ? `played ${q.plays}×` : 'not played yet'}${q.saves ? ` · saved ${q.saves}×` : ''}</p>
           <p class="meta dim">Edited ${ago(q.updated)}</p>
           ${daysLeft(q) <= 5 ? `<p class="meta warn">Deleted in ${daysLeft(q) <= 1 ? 'a day' : `${daysLeft(q)} days`} unless it’s played</p>` : ''}
           <div class="qtile-actions">
@@ -478,6 +481,128 @@
       </section>`;
   }
 
+  // ---------- explore: public quizzes ----------
+  async function viewExplore() {
+    let alive = true;
+    cleanup = () => { alive = false; };
+    let query = '', sort = 'popular', seq = 0, list = null;
+    app.innerHTML = `
+      <main class="page explore">
+        ${nav('<a class="btn primary small" href="/create" data-link>New quiz</a>')}
+        <section class="create-head">
+          <p class="eyebrow">Public quizzes</p>
+          <h1 class="display">Explore <em>quizzes.</em></h1>
+          <p class="lede">Quizzes people made public. Preview one, then save your own copy to host it, change it or download it.</p>
+          <div class="ex-tools">
+            <label class="ex-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m15.5 15.5 5 5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+              <input id="exq" type="search" placeholder="Search by title" aria-label="Search public quizzes" autocomplete="off" enterkeyhint="search"></label>
+            <div class="seg" id="exsort" role="group" aria-label="Sort">
+              <button type="button" data-sort="popular" class="on" aria-pressed="true">Popular</button>
+              <button type="button" data-sort="new" aria-pressed="false">New</button>
+            </div>
+          </div>
+        </section>
+        <div id="exlist"><p class="lede center-note">Loading<span class="dots"></span></p></div>
+      </main>`;
+    placeThumb($('#exsort'));
+    document.fonts?.ready.then(() => placeThumb($('#exsort')));
+    const TYPE_SHORT = { quiz: 'Quiz', tf: 'True/False', type: 'Type answer', puzzle: 'Puzzle', slider: 'Slider', pin: 'Pin' };
+    const card = (q) => `
+      <article class="card qtile excard" data-id="${q.id}">
+        <button class="cover" data-preview="${q.id}" aria-label="Preview ${esc(q.title)}">
+          ${q.cover ? `<img src="${q.cover}" alt="" loading="lazy" decoding="async">` : `<span class="cover-fallback">${esc(q.title.slice(0, 1).toUpperCase())}</span>`}
+          ${q.mine ? '<span class="pubbadge">Yours</span>' : ''}
+        </button>
+        <div class="qtile-body">
+          <h3>${esc(q.title)}</h3>
+          <p class="meta">${q.questions} question${q.questions === 1 ? '' : 's'}${q.author ? ` · by ${esc(q.author)}` : ''}</p>
+          <p class="meta dim">${q.plays ? `played ${fmt(q.plays)}×` : 'not played yet'}${q.saves ? ` · saved ${fmt(q.saves)}×` : ''}</p>
+          <div class="ex-types">${q.types.map((t) => `<span>${TYPE_SHORT[t] || t}</span>`).join('')}</div>
+          <div class="qtile-actions">
+            ${q.mine ? `<a class="btn small" href="/host/${q.id}" data-link>Open</a>`
+              : `<button class="btn primary small" data-save="${q.id}">Save a copy</button>`}
+            <button class="ghost" data-preview="${q.id}">Preview</button>
+          </div>
+        </div>
+      </article>`;
+    const draw = () => {
+      $('#exlist').innerHTML = !list.length
+        ? `<div class="card stats-empty"><p>${query ? `No public quizzes match “${esc(query)}”.` : 'No public quizzes yet. Make one public in the editor (Private / Public under the title) and it shows up here.'}</p>
+            <a class="btn primary small" href="/create" data-link>Make a quiz</a></div>`
+        : `<div class="qgrid">${list.map(card).join('')}</div>`;
+    };
+    async function load() {
+      const my = ++seq;
+      try {
+        const r = await api(`/api/public?sort=${sort}${query ? `&q=${encodeURIComponent(query)}` : ''}`);
+        if (!alive || my !== seq) return;
+        list = r.quizzes;
+        draw();
+      } catch (err) { if (alive) toast(err.message); }
+    }
+    let typing = 0;
+    $('#exq').oninput = (e) => { clearTimeout(typing); typing = setTimeout(() => { query = e.target.value.trim(); load(); }, 250); };
+    $('#exsort').onclick = (e) => {
+      const b = e.target.closest('[data-sort]');
+      if (!b || b.dataset.sort === sort) return;
+      const from = thumbAt($('#exsort'));
+      sort = b.dataset.sort;
+      $('#exsort').querySelectorAll('button').forEach((x) => { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', String(on)); });
+      placeThumb($('#exsort'), from);
+      load();
+    };
+    const saveCopy = async (id, btn) => {
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      try {
+        const r = await api(`/api/public/${id}/save`, {});
+        store.del('blitz:me', localStorage);
+        toast('Saved to your dashboard — it’s yours now');
+        go(`/host/${r.id}`);
+      } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = 'Save a copy'; }
+    };
+    $('#exlist').onclick = (e) => {
+      const s = e.target.closest('[data-save]');
+      if (s) return saveCopy(s.dataset.save, s);
+      const p = e.target.closest('[data-preview]');
+      if (p) openPreview(p.dataset.preview);
+    };
+    // Preview: the questions and pictures, never the answers.
+    async function openPreview(id) {
+      let q;
+      try { q = await api(`/api/public/${id}`); } catch (err) { return toast(err.message); }
+      const back = document.createElement('div');
+      back.className = 'sheet-back';
+      back.innerHTML = `
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pv-h">
+          <header class="sheet-head"><h2 id="pv-h">${esc(q.title)}</h2><button class="sheet-x" aria-label="Close">✕</button></header>
+          <div class="sheet-body">
+            ${q.cover ? `<img class="pv-cover" src="${q.cover}" alt="">` : ''}
+            <p class="meta">${q.questions} question${q.questions === 1 ? '' : 's'}${q.author ? ` · by ${esc(q.author)}` : ''} · ${q.plays ? `played ${fmt(q.plays)}×` : 'not played yet'}${q.saves ? ` · saved ${fmt(q.saves)}×` : ''}</p>
+            <p class="hint">Answers stay hidden until you save your own copy.</p>
+            <ol class="imp-list">${q.questionList.map((x, i) => `
+              <li><span class="iq-n">${i + 1}</span>
+                <div class="iq-main"><div class="iq-top"><span class="iq-type">${TYPE_SHORT[x.type] || x.type}</span><span class="iq-time">${x.time}s</span></div><strong>${esc(x.title)}</strong></div>
+                ${x.image ? `<img class="iq-pic" src="${x.image}" alt="" loading="lazy">` : ''}</li>`).join('')}</ol>
+          </div>
+          <footer class="sheet-foot">${q.mine ? `<a class="btn primary" href="/host/${q.id}" data-link>Open your quiz</a>` : `<button class="btn primary" id="pvSave">Save a copy</button>`}</footer>
+        </div>`;
+      document.body.append(back);
+      document.documentElement.classList.add('sheet-open');
+      const close = () => { document.documentElement.classList.remove('sheet-open'); back.classList.add('out'); document.removeEventListener('keydown', key); setTimeout(() => back.remove(), 180); };
+      const key = (e) => { if (e.key === 'Escape') close(); };
+      document.addEventListener('keydown', key);
+      back.querySelector('.sheet-x').onclick = close;
+      back.addEventListener('pointerdown', (e) => { if (e.target === back) close(); });
+      back.addEventListener('click', (e) => { if (e.target.closest('a[data-link]')) close(); });
+      const sv = back.querySelector('#pvSave');
+      if (sv) sv.onclick = async () => { await saveCopy(q.id, sv); close(); };
+      const prevCleanup = cleanup;
+      cleanup = () => { close(); prevCleanup?.(); };
+    }
+    load();
+  }
+
   // ---------- leaderboard ----------
 
   async function viewLeaderboard() {
@@ -539,7 +664,7 @@
         </section>
         ${statsCard(me.stats)}
         <section class="dash-sec">
-          <div class="sec-head"><h2>My quizzes</h2><span class="count">${me.quizzes.length}</span></div>
+          <div class="sec-head"><h2>My quizzes</h2><span class="count">${me.quizzes.length}</span><span class="grow"></span><a class="ghost" href="/explore" data-link>Explore public →</a></div>
           <div class="qgrid">
             ${me.quizzes.map(quizCard).join('')}
             <a class="card qtile newtile" href="/create" data-link><span>+</span>New quiz</a>
@@ -662,6 +787,7 @@
               <button class="btn">Join</button>
             </form>
           </div>
+          <a class="ghost home-explore" href="/explore" data-link>Or browse public quizzes →</a>
         </section>
         ${showcase()}
         <section class="steps">
@@ -816,7 +942,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
   function upgradeDraft(d) {
     if (!d || typeof d !== 'object' || !Array.isArray(d.questions) || !d.questions.length) return null;
     return {
-      ...d, title: String(d.title || ''), cover: d.cover || null,
+      ...d, title: String(d.title || ''), cover: d.cover || null, public: d.public === true,
       questions: d.questions.map((q) => {
         const u = { ...blankQuestion(), ...(q && typeof q === 'object' ? q : {}) };
         if (!TYPES.some(([t]) => t === u.type)) u.type = 'quiz';
@@ -836,6 +962,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
   const fromSaved = (quiz) => ({
     v: quiz.v,
     title: quiz.title,
+    public: !!quiz.public,
     cover: quiz.cover || null,
     questions: quiz.questions.map((q) => (q.type === 'pin'
       ? { ...blankQuestion(), type: 'pin', title: q.title, image: q.image, regions: q.regions, time: q.time, penalty: q.penalty || 0 }
@@ -986,6 +1113,14 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
           <p class="eyebrow">${editId ? 'Editing quiz' : 'New quiz'}</p>
           <input class="title-input" id="title" maxlength="120" placeholder="Name your quiz" value="${esc(d.title)}" aria-label="Quiz title">
           <div id="cover"></div>
+          <div class="vis">
+            <span class="eyebrow">Who can see it</span>
+            <div class="seg" id="vis" role="group" aria-label="Who can see this quiz">
+              <button type="button" data-vis="0" class="${d.public ? '' : 'on'}" aria-pressed="${!d.public}">Private</button>
+              <button type="button" data-vis="1" class="${d.public ? 'on' : ''}" aria-pressed="${!!d.public}">Public</button>
+            </div>
+            <p class="hint" id="visHint"></p>
+          </div>
           <button class="import-cta" id="importOpen" type="button">
             <span class="import-ic" aria-hidden="true">${IMPORT_ICON}</span>
             <span><b>Already have your questions written?</b><small>Import them from a file, a folder with pictures, or pasted text</small></span>
@@ -1258,6 +1393,25 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       setImage(qOf(drop), e.dataTransfer.files[0]);
     });
     $('#importOpen').onclick = () => openImport();
+    // Private (only you) or Public (on Explore: anyone can preview it without the answers, host or save a copy).
+    const visHint = () => {
+      $('#visHint').textContent = d.public
+        ? 'Anyone can find it on Explore, see its questions (not the answers) and save their own copy. Copies stay theirs, even if you delete yours.'
+        : 'Only you can see it. Share it by hosting a game, or by downloading it.';
+    };
+    visHint();
+    placeThumb($('#vis'));
+    document.fonts?.ready.then(() => placeThumb($('#vis')));
+    $('#vis').onclick = (e) => {
+      const b = e.target.closest('[data-vis]');
+      if (!b || !!+b.dataset.vis === !!d.public) return;
+      const from = thumbAt($('#vis'));
+      d.public = !!+b.dataset.vis;
+      $('#vis').querySelectorAll('button').forEach((x) => { const on = x === b; x.classList.toggle('on', on); x.setAttribute('aria-pressed', String(on)); });
+      placeThumb($('#vis'), from);
+      visHint(); bump($('#visHint')); buzz(6);
+      save();
+    };
     if (!editId && new URLSearchParams(location.search).has('import')) {   // "Import a quiz" from the dashboard
       history.replaceState(null, '', '/create');
       setTimeout(() => openImport(), 50);
@@ -1503,7 +1657,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
     };
 
     $('#publish').onclick = async () => {
-      const payload = { title: d.title.trim(), cover: d.cover || null, questions: [] };
+      const payload = { title: d.title.trim(), cover: d.cover || null, public: !!d.public, questions: [] };
       if (!payload.title) { $('#title').focus(); return toast('Give your quiz a title'); }
       for (const [i, q] of d.questions.entries()) {
         const n = i + 1;
@@ -2298,7 +2452,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
   // surface its line sits on (card, tile, nav, or the page), above that surface's background
   // and below its text. Only does work while something is selected.
   // Anything with its own solid background is a surface: the pill goes above that background, under its text.
-  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox, .chart, .rlist li, .slider-stage, .pinstat, .sheet, .imp-list li, .import-cta, .imp-files li, .imp-paste textarea';
+  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox, .chart, .rlist li, .slider-stage, .pinstat, .sheet, .imp-list li, .import-cta, .imp-files li, .imp-paste textarea, .ex-search, .ex-types span';
   const pageLayer = document.createElement('div');
   pageLayer.id = 'hl';
   pageLayer.setAttribute('aria-hidden', 'true');

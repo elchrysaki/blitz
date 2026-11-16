@@ -108,7 +108,7 @@ function cleanQuiz(body, quizId = null, old = null) {
     images.push(image);
   });
   const cover = cleanCover(body.cover, quizId, old);
-  return { title, questions, images, cover };
+  return { title, questions, images, cover, isPublic: body.public === true };
 }
 
 // The quiz's intro picture: a new upload, "keep the one you have", or none.
@@ -344,7 +344,7 @@ async function getMe(env, uid) {
   // and (only if this browser has anything) extend its 7 days.
   const [userRows, quizRows, liveRows, playedRows] = await env.DB.batch([
     env.DB.prepare("SELECT seen, games, points, wins, podiums, best FROM users WHERE uid = ?").bind(uid),
-    env.DB.prepare("SELECT id, title, questions, v, cover, updated, plays, last_played FROM quizzes WHERE owner = ?").bind(uid),
+    env.DB.prepare("SELECT id, title, questions, v, cover, updated, plays, last_played, public, saves FROM quizzes WHERE owner = ?").bind(uid),
     env.DB.prepare("SELECT quiz_id FROM games WHERE owner = ? AND done = 0 AND created > ?").bind(uid, t - GAME_TTL),
     env.DB.prepare(
       "SELECT p.*, g.gid AS live_gid FROM played p " +
@@ -362,7 +362,7 @@ async function getMe(env, uid) {
     const qs = JSON.parse(r.questions);
     const first = qs.findIndex((q) => q.image); // no intro picture: use the first question's
     return {
-      id: r.id, title: r.title, questions: qs.length, pins: qs.filter(isPin).length,
+      id: r.id, title: r.title, questions: qs.length, pins: qs.filter(isPin).length, public: !!r.public, saves: r.saves || 0,
       updated: r.updated, plays: r.plays, lastPlayed: r.last_played, live: live.has(r.id),
       cover: r.cover ? imageUrl(r.id, r.v, COVER) : first >= 0 ? imageUrl(r.id, r.v, first) : null,
       expires: Math.max(r.updated, r.last_played || 0) + QUIZ_TTL,
@@ -424,8 +424,11 @@ async function handleApi(request, env, url, uid) {
     if (m) {
       const { quiz, error } = await ownQuiz(env, m[1], uid);
       if (error) return error;
-      return json({ id: quiz.id, title: quiz.title, v: quiz.v, cover: coverUrl(quiz), questions: publicQuestions(quiz) });
+      return json({ id: quiz.id, title: quiz.title, v: quiz.v, cover: coverUrl(quiz), public: !!quiz.public, questions: publicQuestions(quiz) });
     }
+    if (path === "/api/public") return listPublic(env, uid, url);
+    m = path.match(/^\/api\/public\/([\w-]+)$/);
+    if (m) return previewPublic(env, uid, m[1]);
     return fail("Not found", 404);
   }
   if (request.method !== "POST") return fail("Not found", 404);
@@ -442,6 +445,8 @@ async function handleApi(request, env, url, uid) {
     if (path === "/api/host") return await host(env, uid, body);
     if (path === "/api/join") return await join(env, uid, body);
     if (path === "/api/act") return await act(env, body);
+    const pm = path.match(/^\/api\/public\/([\w-]+)\/save$/);
+    if (pm) return await savePublic(env, uid, pm[1]);
     const m = path.match(/^\/api\/quizzes\/([\w-]+)(\/delete)?$/);
     if (m) return await (m[2] ? deleteQuiz(env, uid, m[1]) : updateQuiz(env, uid, m[1], body));
   } catch (err) {
@@ -458,8 +463,8 @@ async function createQuiz(env, uid, body) {
   await writeImages(env, id, c.images, c.cover);
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO quizzes (id, owner, title, questions, v, cover, created, updated, plays) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 0)",
-    ).bind(id, uid, c.title, JSON.stringify(c.questions), c.cover ? 1 : 0, t, t),
+      "INSERT INTO quizzes (id, owner, title, questions, v, cover, created, updated, plays, public) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 0, ?)",
+    ).bind(id, uid, c.title, JSON.stringify(c.questions), c.cover ? 1 : 0, t, t, c.isPublic ? 1 : 0),
     upsertUser(env, uid),
   ]);
   return json({ id });
@@ -471,11 +476,60 @@ async function updateQuiz(env, uid, id, body) {
   const c = cleanQuiz(body, id, old);
   await writeImages(env, id, c.images, c.cover);
   await env.DB.batch([
-    env.DB.prepare("UPDATE quizzes SET title = ?, questions = ?, cover = ?, v = v + 1, updated = ? WHERE id = ?")
-      .bind(c.title, JSON.stringify(c.questions), c.cover ? 1 : 0, now(), id),
+    env.DB.prepare("UPDATE quizzes SET title = ?, questions = ?, cover = ?, public = ?, v = v + 1, updated = ? WHERE id = ?")
+      .bind(c.title, JSON.stringify(c.questions), c.cover ? 1 : 0, c.isPublic ? 1 : 0, now(), id),
     upsertUser(env, uid),
   ]);
   return json({ id });
+}
+
+// ---------- public quizzes ----------
+// A public quiz can be found by anyone on Explore, previewed (without its answers) and saved: saving makes
+// a copy that belongs to whoever saved it, pictures included, so the quiz lives on even after its maker
+// deletes it or their browser is forgotten. Each save also counts as activity for the original.
+const typeOfQ = (q) => (["tf", "slider", "type", "puzzle"].includes(q.type) ? q.type : isPin(q) ? "pin" : "quiz");
+const publicCard = (r, uid) => {
+  const qs = JSON.parse(r.questions);
+  const first = qs.findIndex((q) => q.image);
+  return {
+    id: r.id, title: r.title, questions: qs.length, types: [...new Set(qs.map(typeOfQ))],
+    cover: r.cover ? imageUrl(r.id, r.v, COVER) : first >= 0 ? imageUrl(r.id, r.v, first) : null,
+    plays: r.plays, saves: r.saves || 0, updated: r.updated, author: r.author || null, mine: r.owner === uid,
+  };
+};
+async function listPublic(env, uid, url) {
+  const q = text(url.searchParams.get("q")).trim().slice(0, 60);
+  const sort = url.searchParams.get("sort") === "new" ? "q.updated DESC" : "(q.plays + 3 * q.saves) DESC, q.updated DESC";
+  const like = `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+  const rows = await env.DB.prepare(
+    "SELECT q.id, q.owner, q.title, q.questions, q.v, q.cover, q.plays, q.saves, q.updated, u.name AS author FROM quizzes q " +
+    `LEFT JOIN users u ON u.uid = q.owner WHERE q.public = 1 ${q ? "AND q.title LIKE ? ESCAPE '\\'" : ""} ORDER BY ${sort} LIMIT 60`,
+  ).bind(...(q ? [like] : [])).all();
+  return json({ quizzes: rows.results.map((r) => publicCard(r, uid)) });
+}
+async function previewPublic(env, uid, id) {
+  const quiz = await loadQuiz(env, id);
+  if (!quiz || !quiz.public) return fail("This quiz isn't public", 404);
+  const author = await env.DB.prepare("SELECT name FROM users WHERE uid = ?").bind(quiz.owner).first();
+  const card = publicCard({ ...quiz, questions: JSON.stringify(quiz.questions), author: author?.name }, uid);
+  // Titles and pictures only: no answers, so players can't look them up before a game.
+  return json({ ...card, questionList: quiz.questions.map((q, i) => ({ type: typeOfQ(q), title: q.title, time: q.time,
+    image: q.image ? imageUrl(quiz.id, quiz.v, i) : null })) });
+}
+async function savePublic(env, uid, id) {
+  const quiz = await loadQuiz(env, id);
+  if (!quiz || !quiz.public) return fail("This quiz isn't public", 404);
+  const copy = token(8);
+  const t = now();
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO quizzes (id, owner, title, questions, v, cover, created, updated, plays, public, source) VALUES (?, ?, ?, ?, 1, ?, ?, ?, 0, 0, ?)",
+    ).bind(copy, uid, quiz.title, JSON.stringify(quiz.questions), quiz.cover ? 1 : 0, t, t, quiz.id),
+    env.DB.prepare("INSERT INTO images (quiz_id, idx, mime, data) SELECT ?, idx, mime, data FROM images WHERE quiz_id = ?").bind(copy, quiz.id),
+    env.DB.prepare("UPDATE quizzes SET saves = saves + 1, last_played = MAX(COALESCE(last_played, 0), ?) WHERE id = ?").bind(t, quiz.id),
+    upsertUser(env, uid),
+  ]);
+  return json({ id: copy });
 }
 
 async function deleteQuiz(env, uid, id) {
@@ -570,6 +624,10 @@ function ensureSchema(env) {
   ])
     // Databases made before intro pictures existed get the column added; "duplicate column" means it's already there.
     .then(() => env.DB.prepare("ALTER TABLE quizzes ADD COLUMN cover INTEGER NOT NULL DEFAULT 0").run().catch(() => {}))
+    // Public quizzes: whether it's public, how often it was saved, and which public quiz a copy came from.
+    .then(() => Promise.all([["public", "INTEGER NOT NULL DEFAULT 0"], ["saves", "INTEGER NOT NULL DEFAULT 0"], ["source", "TEXT"]]
+      .map(([c, type]) => env.DB.prepare(`ALTER TABLE quizzes ADD COLUMN ${c} ${type}`).run().catch(() => {}))))
+    .then(() => env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_quizzes_public ON quizzes(public, plays)").run().catch(() => {}))
     // Lifetime stats columns for databases made before the leaderboard existed ("duplicate column" = already there).
     .then(() => Promise.all([["name", "TEXT"], ["look", "TEXT"], ["games", "INTEGER NOT NULL DEFAULT 0"], ["points", "INTEGER NOT NULL DEFAULT 0"],
       ["wins", "INTEGER NOT NULL DEFAULT 0"], ["podiums", "INTEGER NOT NULL DEFAULT 0"], ["best", "INTEGER NOT NULL DEFAULT 0"]]

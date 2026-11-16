@@ -42,7 +42,7 @@ KEEP_RE = re.compile(r"^/api/quizzes/([\w-]+)/image/(\d+)(?:\?v=\d+)?$")  # "kee
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,40}$")
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{32}$")
 TIMES = (10, 20, 30, 60)
-SPA = ("/", "/create", "/play", "/dashboard", "/leaderboard")
+SPA = ("/", "/create", "/play", "/dashboard", "/leaderboard", "/explore")
 
 LOCK = threading.RLock()
 GAMES = {}  # pin -> Game
@@ -114,7 +114,8 @@ def clean_quiz(body, quiz_id=None, old=None):
             raise ValueError(f"Mark the correct answer for question {n}")
         questions.append({"type": "quiz", "title": qtitle, "answers": answers, "correct": correct,
                           "image": image, "time": limit})
-    return {"title": title, "questions": questions, "cover": clean_cover(body.get("cover"), quiz_id, old)}
+    return {"title": title, "questions": questions, "cover": clean_cover(body.get("cover"), quiz_id, old),
+            "public": body.get("public") is True}
 
 
 def clean_cover(image, quiz_id, old):
@@ -802,8 +803,15 @@ class Handler(BaseHTTPRequestHandler):
                 if quiz:
                     q = [dict(x, image=image_url(m.group(1), quiz, i)) for i, x in enumerate(quiz["questions"])]
                     self.send_json(200, {"id": m.group(1), "title": quiz["title"], "v": quiz.get("v", 1),
-                                         "cover": image_url(m.group(1), quiz, COVER), "questions": q})
+                                         "cover": image_url(m.group(1), quiz, COVER), "public": bool(quiz.get("public")), "questions": q})
                 return
+            if path == "/api/public":
+                with LOCK:
+                    return self.list_public(qs)
+            m = re.match(r"^/api/public/([\w-]+)$", path)
+            if m:
+                with LOCK:
+                    return self.preview_public(m.group(1))
             if path.startswith("/api/"):
                 return self.fail(404, "Not found")
             return self.static(path)
@@ -844,6 +852,7 @@ class Handler(BaseHTTPRequestHandler):
             cover = COVER if quiz.get("cover") else next((i for i, q in enumerate(quiz["questions"]) if q.get("image")), None)
             mine.append({"id": quiz_id, "title": quiz["title"], "questions": len(quiz["questions"]),
                          "pins": sum(is_pin(q) for q in quiz["questions"]),
+                         "public": bool(quiz.get("public")), "saves": quiz.get("saves", 0),
                          "updated": quiz.get("updated", 0), "plays": quiz.get("plays", 0),
                          "lastPlayed": quiz.get("lastPlayed"), "live": bool(live_game(quiz_id, self.uid)),
                          "cover": image_url(quiz_id, quiz, cover) if cover is not None else None,
@@ -926,9 +935,12 @@ class Handler(BaseHTTPRequestHandler):
         route = {"/api/quizzes": self.post_quiz, "/api/host": self.post_host,
                  "/api/join": self.post_join, "/api/act": self.post_act}.get(path)
         m = re.match(r"^/api/quizzes/([\w-]+)(/delete)?$", path)
+        pm = re.match(r"^/api/public/([\w-]+)/save$", path)
         with LOCK:
             if route:
                 return route(body)
+            if pm:
+                return self.save_public(pm.group(1))
             if m:
                 return (self.delete_quiz if m.group(2) else self.update_quiz)(m.group(1), body)
             self.fail(404, "Not found")
@@ -946,6 +958,58 @@ class Handler(BaseHTTPRequestHandler):
         save_user(self.uid, u)
         self.send_json(200, {"id": quiz_id})
 
+    # -- public quizzes: found on Explore, previewed without answers, saved as your own copy --
+    def public_card(self, quiz_id, quiz):
+        qs = quiz["questions"]
+        cover = COVER if quiz.get("cover") else next((i for i, q in enumerate(qs) if q.get("image")), None)
+        owner = load_user(quiz["owner"]) if quiz.get("owner") else {}
+        return {"id": quiz_id, "title": quiz["title"], "questions": len(qs),
+                "types": list(dict.fromkeys(q.get("type") if q.get("type") in ("tf", "slider", "type", "puzzle") else "pin" if is_pin(q) else "quiz" for q in qs)),
+                "cover": image_url(quiz_id, quiz, cover) if cover is not None else None,
+                "plays": quiz.get("plays", 0), "saves": quiz.get("saves", 0), "updated": quiz.get("updated", 0),
+                "author": (owner.get("stats") or {}).get("name"), "mine": quiz.get("owner") == self.uid}
+
+    def list_public(self, qs):
+        q = str(qs.get("q", "")).strip().lower()[:60]
+        cards = []
+        for name in os.listdir(QUIZZES):
+            if not name.endswith(".json"):
+                continue
+            quiz = load_quiz(name[:-5])
+            if quiz and quiz.get("public") and (not q or q in quiz["title"].lower()):
+                cards.append(self.public_card(name[:-5], quiz))
+        if qs.get("sort") == "new":
+            cards.sort(key=lambda c: -c["updated"])
+        else:
+            cards.sort(key=lambda c: (-(c["plays"] + 3 * c["saves"]), -c["updated"]))
+        self.send_json(200, {"quizzes": cards[:60]})
+
+    def preview_public(self, quiz_id):
+        quiz = load_quiz(quiz_id)
+        if not quiz or not quiz.get("public"):
+            return self.fail(404, "This quiz isn't public")
+        card = self.public_card(quiz_id, quiz)
+        card["questionList"] = [{"type": t, "title": q["title"], "time": q["time"], "image": image_url(quiz_id, quiz, i)}
+                                for i, (q, t) in enumerate(zip(quiz["questions"], [q.get("type") if q.get("type") in ("tf", "slider", "type", "puzzle") else "pin" if is_pin(q) else "quiz" for q in quiz["questions"]]))]
+        self.send_json(200, card)
+
+    def save_public(self, quiz_id):
+        quiz = load_quiz(quiz_id)
+        if not quiz or not quiz.get("public"):
+            return self.fail(404, "This quiz isn't public")
+        copy_id = secrets.token_urlsafe(8)
+        t = time.time()
+        copy = {k: quiz[k] for k in ("title", "questions", "cover") if k in quiz}
+        copy.update(owner=self.uid, v=1, created=t, updated=t, plays=0, public=False, saves=0, source=quiz_id)
+        write_json(quiz_path(copy_id), copy)
+        quiz["saves"] = quiz.get("saves", 0) + 1
+        quiz["lastPlayed"] = max(quiz.get("lastPlayed") or 0, t)   # a save keeps a public quiz from going idle
+        write_json(quiz_path(quiz_id), quiz)
+        u = load_user(self.uid)
+        u["created"].insert(0, copy_id)
+        save_user(self.uid, u)
+        self.send_json(200, {"id": copy_id})
+
     def update_quiz(self, quiz_id, body):
         old = self.own_quiz(quiz_id)
         if not old:
@@ -954,7 +1018,7 @@ class Handler(BaseHTTPRequestHandler):
             quiz = clean_quiz(body, quiz_id, old)
         except ValueError as e:
             return self.fail(400, str(e))
-        keep = {k: old[k] for k in ("owner", "created", "plays", "lastPlayed") if k in old}
+        keep = {k: old[k] for k in ("owner", "created", "plays", "lastPlayed", "saves", "source") if k in old}
         quiz.update(keep, v=old.get("v", 1) + 1, updated=time.time())
         write_json(quiz_path(quiz_id), quiz)
         save_user(self.uid, load_user(self.uid))

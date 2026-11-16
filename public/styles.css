@@ -1089,3 +1089,26 @@ html.sheet-open { overflow: hidden; }
 .newtile.imptile .import-ic { font-size: 0; width: 46px; height: 46px; border-radius: 15px; margin-bottom: 4px; color: var(--wall); }
 .newtile.imptile small { display: block; color: var(--mute); font-size: 13px; font-weight: 500; max-width: 22ch; }
 .qtile-more { display: inline-flex; gap: 2px; margin-left: auto; }   /* Download + Delete stay together, at the end */
+
+/* ---------- public quizzes ---------- */
+.pubbadge { position: absolute; top: 12px; right: 12px; padding: 5px 10px; border-radius: 999px; background: var(--turquoise); color: var(--bg);
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.vis { display: grid; gap: 8px; justify-items: start; }
+.vis .hint { margin: 0; max-width: 60ch; }
+.home-explore { margin-top: 14px; }
+.ex-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 6px; }
+.ex-search { flex: 1 1 260px; display: flex; align-items: center; gap: 10px; height: var(--ctl); padding: 0 18px; border-radius: 999px;
+  background: var(--solid); border: 1.5px solid var(--edge); transition: border-color .2s ease, background-color .2s ease; }
+.ex-search:focus-within { border-color: var(--ice); background: var(--solid-hi); }
+.ex-search svg { flex: none; width: 20px; height: 20px; color: var(--mute); }
+.ex-search input { flex: 1; min-width: 0; height: 100%; background: none; border: 0; outline: 0; color: var(--ink); font-size: 16px; }
+.ex-search input::placeholder { color: rgba(246, 241, 233, .55); }
+.ex-search input::-webkit-search-cancel-button { filter: invert(1); opacity: .6; }
+.excard .cover { display: grid; width: 100%; padding: 0; border: 0; cursor: pointer; }
+.ex-types { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ex-types span { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: rgba(246, 241, 233, .1); color: rgba(246, 241, 233, .88); }
+.center-note { text-align: center; padding: 40px 0; }
+.pv-cover { width: 100%; max-height: 240px; object-fit: contain; border-radius: 16px; background: var(--bg); }
+.explore .stats-empty { margin-top: 8px; }
+/* The bar holds Dashboard, Explore and Leaderboard on wide screens; Leaderboard goes first, then Explore. */
+@media (max-width: 860px) { .nav .navlink.wider { display: none; } }
