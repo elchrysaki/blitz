@@ -252,6 +252,45 @@
     <li><span class="rank">${i + 1}</span><span class="name">${esc(p.name)}</span>
       ${p.gained ? `<span class="gain">+${fmt(p.gained)}</span>` : ''}<span class="score">${fmt(p.score)}</span></li>`).join('');
 
+  // ---------- host results ----------
+  // Kahoot-style bars: how many picked each answer, the right one ticked.
+  const answerChart = (q, counts, correct) => {
+    const top = Math.max(1, ...counts);
+    return `<div class="chart ${q.type === 'tf' ? 'tf' : ''}" role="img" aria-label="${counts.map((n, i) => `${q.answers[i]}: ${n}`).join(', ')}">
+      ${counts.map((n, i) => {
+        const tone = q.type === 'tf' ? (i ? 't0' : 't1') : `t${i}`;
+        return `<div class="cbar ${tone} ${i === correct ? 'right' : ''}" style="--h:${Math.max(4, (n / top) * 100)}%;--i:${i}">
+          <span class="cbar-n">${i === correct ? '✓ ' : ''}${n}</span><i></i>
+          <b>${q.type === 'tf' ? (i ? '✕' : '✓') : L[i]}</b></div>`;
+      }).join('')}
+    </div>`;
+  };
+  // One player's reply, in words, for any question type.
+  function replyText(q, r, s) {
+    const c = r.choice;
+    if (c === null || c === undefined) return 'No answer';
+    switch (q.type) {
+      case 'tf': return c ? 'False' : 'True';
+      case 'type': return `“${c}”`;
+      case 'slider': return withUnit(c, q.unit);
+      case 'pin': { const n = s.regions.length; return n > 1 ? `Found ${r.found} of ${n} areas` : r.found ? 'Pin inside the area' : 'Pin outside the area'; }
+      case 'puzzle': return c.map((d) => q.answers[d]).join(' → ');
+      default: return `${L[c]} · ${q.answers[c]}`;
+    }
+  }
+  const repliesPanel = (q, s) => !s.replies?.length ? '' : `
+    <section class="card replies">
+      <div class="replies-head"><p class="eyebrow">Who answered what</p>
+        <span class="replies-sum"><b>${s.replies.filter((r) => r.ok).length}</b> right · <b>${s.replies.filter((r) => r.choice !== null && !r.ok).length}</b> wrong${
+          s.replies.some((r) => r.choice === null) ? ` · <b>${s.replies.filter((r) => r.choice === null).length}</b> no answer` : ''}</span></div>
+      <ul class="rlist">${s.replies.map((r, k) => `
+        <li class="${r.ok ? 'ok' : r.gained ? 'half' : r.choice === null ? 'none' : 'bad'}" style="--i:${Math.min(k, 12)}">
+          <span class="r-art">${avatar(r.look || r.name)}</span>
+          <span class="r-main"><strong>${esc(r.name)}</strong><small>${esc(replyText(q, r, s))}</small></span>
+          <span class="r-pts">${r.gained ? `+${fmt(r.gained)}` : r.choice === null ? '–' : '0'}</span>
+        </li>`).join('')}</ul>
+    </section>`;
+
   // ---------- celebrations ----------
   const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   // A one-off shower of paper in the four answer colours (pure CSS; nothing runs once it has landed).
@@ -278,6 +317,28 @@
 
   // ---------- router ----------
 
+  // ---------- staying up to date ----------
+  // A tab left open (or a home-screen app resumed days later) keeps running the code it opened with.
+  // Now and then, check whether a newer version is live; if so, reload at the next page change, or
+  // right away when you come back to the tab, unless a live game is on screen.
+  const ASSETS = ['/app.js', '/styles.css'];
+  let tags = null, stale = false, lastCheck = 0;
+  const inGame = () => /^\/(play|host\/)/.test(location.pathname);
+  async function checkVersion() {
+    if (stale || Date.now() - lastCheck < 60000) return;
+    lastCheck = Date.now();
+    const now = await Promise.all(ASSETS.map((u) => fetch(u, { method: 'HEAD', cache: 'no-store' })
+      .then((r) => (r.ok ? r.headers.get('etag') || '' : null)).catch(() => null)));
+    if (now.includes(null)) return;                       // offline or a hiccup: try again later
+    if (!tags) { tags = now; return; }
+    if (now.some((v, i) => v && tags[i] && v !== tags[i])) stale = true;
+  }
+  checkVersion();
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    checkVersion().then(() => { if (stale && !inGame()) location.reload(); });
+  });
+
   function go(path) { history.pushState(null, '', path); route(); }
   window.addEventListener('popstate', route);
   document.addEventListener('click', (e) => {
@@ -286,6 +347,8 @@
   });
 
   function route() {
+    if (stale) { location.reload(); return; }   // a newer version is live: load it for this page
+    checkVersion();
     if (cleanup) { cleanup(); cleanup = null; }
     if (typeof closePicker === 'function') closePicker(false);
     viewKey = '';
@@ -663,6 +726,27 @@
     });
   }
 
+  // Bring editor state from any older version of the app up to today's shape: every question gets
+  // every field the current editor knows (new types and options included), so nothing is missing.
+  const pad4 = (a) => [...(Array.isArray(a) ? a.map((x) => String(x ?? '')) : []), '', '', '', ''].slice(0, 4);
+  function upgradeDraft(d) {
+    if (!d || typeof d !== 'object' || !Array.isArray(d.questions) || !d.questions.length) return null;
+    return {
+      ...d, title: String(d.title || ''), cover: d.cover || null,
+      questions: d.questions.map((q) => {
+        const u = { ...blankQuestion(), ...(q && typeof q === 'object' ? q : {}) };
+        if (!TYPES.some(([t]) => t === u.type)) u.type = 'quiz';
+        u.answers = pad4(q?.answers);
+        u.accepted = pad4(q?.accepted);
+        u.regions = Array.isArray(q?.regions) ? q.regions : [];
+        if (!TIMES.includes(u.time)) u.time = 20;
+        if (!Number.isInteger(u.correct) || u.correct < 0 || u.correct > 3) u.correct = 0;
+        if (!MARGIN_SHARE.hasOwnProperty(u.margin)) u.margin = 'medium';
+        return u;
+      }),
+    };
+  }
+
   // Turn a saved quiz back into editor state. Pictures stay as URLs; the server keeps them on save.
   const fromSaved = (quiz) => ({
     v: quiz.v,
@@ -790,7 +874,7 @@
 
   async function viewCreate(editId) {
     const draftKey = editId ? `blitz:draft:${editId}` : 'blitz:draft';
-    let d = store.get(draftKey, localStorage);
+    let d = upgradeDraft(store.get(draftKey, localStorage));
     if (editId) {
       let alive = true;
       cleanup = () => { alive = false; };
@@ -804,7 +888,7 @@
         return;
       }
       if (!alive) return;
-      if (!d || d.v !== saved.v) d = fromSaved(saved);   // unsaved local edits survive a refresh
+      if (!d || d.v !== saved.v) d = upgradeDraft(fromSaved(saved));   // unsaved local edits survive a refresh
     }
     d = d || { title: '', questions: [blankQuestion()] };
     const save = () => store.set(draftKey, d, localStorage);
@@ -1326,7 +1410,7 @@
              ${reveal
                ? `${orderList(s.solution, 'reveal', q.answers)}<p class="pinstat"><strong>${s.hits}</strong> of ${s.count} got the order right</p>`
                : `${orderList(q.answers, 'shuffled')}<p class="pinstat">Shuffled — players drag them into the right order</p>`}`
-          : q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : '';
+          : `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}${reveal ? answerChart(q, s.counts, s.correct) : ''}`;
         app.innerHTML = `
           <main class="page stage ${reveal ? 'is-reveal' : ''} ${pin ? 'pinq' : ''}">
             <div class="timerbar"><i data-bar ${reveal ? 'style="transform:scaleX(0)"' : ''}></i></div>
@@ -1349,9 +1433,10 @@
                 : '<div class="clock"><span data-secs></span></div>'}
             </section>
             ${pin || ['slider', 'type', 'puzzle'].includes(q.type) ? '' : tiles(q.answers, (i) => (!reveal ? {} : {
-              cls: i === s.correct ? 'right' : 'dimmed',
+              cls: i === s.correct ? 'right' : 'faded',
               extra: `<em>${i === s.correct ? '✓ ' : ''}${s.counts[i]}</em>`,
             }), q.type)}
+            ${reveal ? repliesPanel(q, s) : ''}
           </main>`;
         $('#next').onclick = () => act(s, 'next');
         return;
@@ -1863,7 +1948,7 @@
   // surface its line sits on (card, tile, nav, or the page), above that surface's background
   // and below its text. Only does work while something is selected.
   // Anything with its own solid background is a surface: the pill goes above that background, under its text.
-  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox';
+  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox, .chart, .rlist li, .slider-stage, .pinstat';
   const pageLayer = document.createElement('div');
   pageLayer.id = 'hl';
   pageLayer.setAttribute('aria-hidden', 'true');

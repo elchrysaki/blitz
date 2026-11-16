@@ -13,6 +13,10 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 
 **Lobby characters:** every player gets an original big-head character in an old-school 3D, 2000s-diva style, drawn by the app as SVG. Each player gets a random character when they join; the server picks it, so the host and the player see the same one. The host's lobby shows them as a grid that players hop into as they join, and each player sees their own character while waiting.
 
+**Host results:** after every question the host sees what everyone replied, not just the right answer. Quiz and True / False questions get a bar chart of how many picked each answer (the right one ticked). Every type gets a "Who answered what" list: each player's character, their reply in words (the answer, the typed text, the number, the order they chose, or the areas they found), and the points it earned, best first.
+
+**Old quizzes, new editor:** opening any quiz or unsaved draft in the editor brings it up to the current format, so every question type and option is there, whatever version the quiz was made with.
+
 Each quiz can also have an **intro picture**, added under the title in the editor. It's shown whole (never cropped) in the host's preview, in the lobby while players join, and on each player's waiting screen. It's also the quiz's cover on the dashboard; without one, the first question's picture is used.
 
 ## No accounts
@@ -70,7 +74,7 @@ The palette comes from a teal-and-vermilion wall painting. The colors were white
 ## Speed
 
 - **No continuous effects.** The background glow is a static gradient, cards don't blur what's behind them, and the countdown ticker only runs while a timer is on screen and the tab is visible. Idle pages use almost no CPU or GPU. People with reduced motion turned on get no animations.
-- **Service worker** (`public/sw.js`). The page, script and styles come from the network first, usually as a quick "not changed" check, so every visit gets the newest version. The saved copy is used if the network takes over 2.5 s or is offline. When a new version takes over right as the page opens, the page reloads once to show it. Quiz pictures are cached for good, since their URLs change whenever a picture changes. Live game data is never cached.
+- **Service worker** (`public/sw.js`). The page, script and styles come from the network first, usually as a quick "not changed" check, so every visit gets the newest version. The saved copy is used if the network takes over 2.5 s or is offline. When a new version takes over right as the page opens, the page reloads once to show it. A tab left open (or a home-screen app resumed later) checks now and then whether a newer version is live (by the `app.js` and `styles.css` ETags); if so, it reloads at the next page change, or straight away when you come back to it, unless a live game is on screen. Quiz pictures are cached for good, since their URLs change whenever a picture changes. Live game data is never cached.
 - **Dashboard** draws instantly from the last copy saved in `localStorage` (`blitz:me`), then refreshes from the server.
 - **Server.** The dashboard needs one D1 round trip, and Smart Placement runs the Worker near the database.
 

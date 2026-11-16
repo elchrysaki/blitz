@@ -874,6 +874,10 @@ export class GameRoom extends DurableObject {
           } else {
             st.counts = st.question.answers.map((_, i) => players.filter((p) => p.choice === i).length);
           }
+          // Who answered what (every type): the host can show each player's reply, best first.
+          st.replies = players
+            .map((p) => ({ name: p.name, look: p.look, choice: p.choice, ok: p.right, gained: p.gained, found: p.found || 0 }))
+            .sort((a, b) => b.gained - a.gained || (a.choice === null) - (b.choice === null) || a.name.localeCompare(b.name));
         }
       }
     } else {

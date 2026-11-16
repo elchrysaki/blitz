@@ -620,6 +620,11 @@ class Game:
                         s["hits"] = sum(p["right"] for p in self.players.values())
                     else:
                         s["counts"] = [picks.count(i) for i in range(len(s["question"]["answers"]))]
+                    # Who answered what (every type): the host can show each player's reply, best first.
+                    s["replies"] = sorted(
+                        ({"name": p["name"], "look": p.get("look"), "choice": p["choice"], "ok": p["right"],
+                          "gained": p["gained"], "found": p.get("found", 0)} for p in self.players.values()),
+                        key=lambda r: (-r["gained"], r["choice"] is None, r["name"].lower()))
         else:
             p = self.players[pid]
             s.update(role="player", name=p["name"], look=p.get("look"), score=p["score"], gained=p["gained"],

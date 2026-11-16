@@ -75,7 +75,7 @@ em { font-style: normal; color: var(--accent); }  /* highlighted word: same face
    Text fields keep a plain native selection. */
 ::selection { background: transparent; color: var(--bg); }
 input::selection, textarea::selection { background: var(--accent); color: var(--bg); }
-.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .lchip, .stat, .otile, .accept, .typed-chip, .typebox { isolation: isolate; }
+.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .lchip, .stat, .otile, .accept, .typed-chip, .typebox, .chart, .rlist li, .slider-stage, .pinstat { isolation: isolate; }
 .linkcard, .chip, .pill, .ppin, .standing, .waiting-chip, .set-group, .ans, .lchip, .stat, .accept, .typed-chip, .typebox { position: relative; }
 .card { position: relative; }
 .hl-layer { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
@@ -930,3 +930,57 @@ button.tile:active { transform: scale(.97); }
   .caret { animation: none; }
 }
 .otile { text-align: left; }
+
+/* ---------- host results: answer chart + who answered what ---------- */
+/* wrong answers after the reveal: a dark solid tile with light text (readable on the denim), colour kept on the badge */
+.tile.faded { background: var(--solid); color: rgba(246, 241, 233, .9); box-shadow: inset 0 0 0 1.5px var(--edge-soft); }
+.tile.faded b { background: var(--tone); color: var(--bg); }
+.tile.faded em { background: rgba(246, 241, 233, .12); color: var(--ink); }
+.chart { display: flex; align-items: flex-end; justify-content: center; gap: clamp(10px, 2.4vw, 22px); height: 190px; width: min(560px, calc(100vw - 40px));
+  padding: 16px 18px 12px; border-radius: 24px; background: var(--solid); border: 1.5px solid var(--edge-soft); }
+.cbar { flex: 1; max-width: 110px; height: 100%; display: grid; grid-template-rows: auto 1fr auto; justify-items: stretch; gap: 6px; }
+.cbar i { align-self: end; height: var(--h); min-height: 6px; border-radius: 10px 10px 4px 4px; background: var(--tone);
+  transform-origin: bottom; animation: grow-bar .7s var(--spring-bouncy, var(--ease)) both; animation-delay: calc(var(--i) * 70ms); }
+.cbar-n { text-align: center; white-space: nowrap; font: 800 20px/1 var(--display); color: var(--ink); font-variant-numeric: tabular-nums; }
+.cbar.right .cbar-n { color: var(--good); }
+.cbar b { justify-self: center; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--tone); color: var(--bg); font: 800 15px/1 var(--display); }
+.cbar:not(.right) i { opacity: .55; }
+.cbar.right i { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--good); }
+@keyframes grow-bar { from { transform: scaleY(0); } }
+
+.replies { padding: 20px 22px; display: grid; gap: 14px; }
+.replies-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+.replies-sum { color: var(--mute); font-size: 14px; font-weight: 600; }
+.replies-sum b { color: var(--ink); font-family: var(--display); }
+.rlist { width: 100%; list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.rlist li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 12px 8px 8px; border-radius: 16px;
+  background: var(--solid); border: 1.5px solid var(--edge-soft); border-left: 4px solid var(--rc, var(--edge-soft));
+  animation: pop .3s var(--ease) both; animation-delay: calc(var(--i) * 30ms); }
+.rlist li.ok { --rc: var(--good); }
+.rlist li.half { --rc: var(--sand); }
+.rlist li.bad { --rc: var(--vermilion-hi); }
+.rlist li.none { opacity: .75; }
+.r-art .buddy-art { display: block; width: 34px; height: 41px; }
+.r-main { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.r-main strong { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r-main small { color: rgba(246, 241, 233, .86); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.r-pts { flex: none; font: 800 15px var(--display); font-variant-numeric: tabular-nums; color: var(--mute); }
+.rlist li.ok .r-pts { color: var(--good); }
+.rlist li.half .r-pts { color: var(--sand); }
+
+@media (max-width: 480px) {
+  .chart { height: 160px; padding: 12px 12px 10px; }
+  .cbar-n { font-size: 17px; }
+  .rlist { grid-template-columns: minmax(0, 1fr); }
+  .replies { padding: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .cbar i, .rlist li { animation: none !important; } }
+
+/* Results that sit on the denim get a solid backing so they stay readable on any part of the photo. */
+.stage .slider-stage { padding: 6px 22px 18px; border-radius: 24px; background: var(--solid); border: 1.5px solid var(--edge-soft); }
+.stage .slider-stage .nl-track { background: rgba(246, 241, 233, .22); }
+.stage .slider-stage .nl-ends { color: var(--ink); }
+.stage .pinstat { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 999px; color: var(--ink);
+  background: var(--solid); border: 1.5px solid var(--edge-soft); }
+.stage .slider-stage .pinstat { background: none; border: 0; padding: 0; }
+.stage .bar .pill { background: var(--solid); border: 1.5px solid var(--edge-soft); color: var(--ink); }
