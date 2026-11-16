@@ -81,6 +81,20 @@ function cleanQuiz(body, quizId = null, old = null) {
       images.push(image);
       return;
     }
+    if (q.type === "type") {
+      const accepted = (Array.isArray(q.accepted) ? q.accepted : []).map((a) => text(a).trim().slice(0, TYPE_MAX)).filter(Boolean);
+      if (!accepted.length || accepted.length > 4 || !accepted.every((a) => norm(a))) throw new UserError(`Question ${n}: write the right answer`);
+      questions.push({ type: "type", title: qtitle, accepted, time, image: !!image });
+      images.push(image);
+      return;
+    }
+    if (q.type === "puzzle") {
+      const items = (Array.isArray(q.answers) ? q.answers : []).map((a) => text(a).trim().slice(0, 100));
+      if (items.length < 2 || items.length > 4 || !items.every(Boolean)) throw new UserError(`Question ${n}: a puzzle needs 2 to 4 items`);
+      questions.push({ type: "puzzle", title: qtitle, answers: items, time, image: !!image });
+      images.push(image);
+      return;
+    }
     if (!Array.isArray(q.answers)) throw new UserError(`Question ${n} needs answers`);
     const answers = q.answers.map((a) => text(a).trim().slice(0, 100));
     if (answers.length < 2 || answers.length > 4 || !answers.every(Boolean)) {
@@ -146,6 +160,49 @@ function sliderShare(q, v) {
   return tol && dist <= tol + 1e-9 ? 1 - 0.5 * (dist / tol) : 0;
 }
 
+// Type answer: players type it; case, accents, punctuation and extra spaces don't matter,
+// and one slip of the keyboard is forgiven in longer answers (6+ letters, no digits).
+const TYPE_MAX = 40;
+const norm = (v) => String(v).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+function oneEdit(a, b) {   // true if a and b differ by at most one inserted, deleted or changed character
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+const typedRight = (q, v) => {
+  const t = norm(v);
+  return !!t && q.accepted.some((a) => { const k = norm(a); return t === k || (k.length >= 6 && !/\d/.test(k) && oneEdit(t, k)); });
+};
+
+// Puzzle: players see the items shuffled (the same shuffle for everyone in a game) and put them in order.
+// perm[i] is the right position of the item shown i-th. Never shown already in order.
+function puzzlePerm(seed, n) {
+  let h = 2166136261;
+  for (const c of seed) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  const rnd = () => { h = Math.imul(h ^ (h >>> 15), 2246822507) ^ Math.imul(h ^ (h >>> 13), 3266489909); return ((h >>>= 0) % 1e6) / 1e6; };
+  const perm = [...Array(n).keys()];
+  for (let i = n - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; }
+  return perm.every((v, i) => v === i) ? perm.map((_, i) => (i + 1) % n) : perm;
+}
+// What players typed, grouped (ignoring case and accents), most common first.
+function typedTally(players) {
+  const groups = new Map();
+  for (const p of players) {
+    if (typeof p.choice !== "string") continue;
+    const k = norm(p.choice);
+    const g = groups.get(k) || { text: p.choice, n: 0, ok: p.right };
+    g.n++;
+    groups.set(k, g);
+  }
+  return [...groups.values()].sort((a, b) => b.n - a.n || b.ok - a.ok).slice(0, 8);
+}
+const puzzleRight = (perm, choice) => Array.isArray(choice) && choice.length === perm.length && choice.every((d, k) => perm[d] === k);
+
 // Target areas for a pin question: rectangles as fractions (0-1) of the picture.
 function cleanRegions(regions, n) {
   if (!Array.isArray(regions) || regions.length < 1 || regions.length > 8) {
@@ -174,6 +231,8 @@ function isRight(q, choice) {
   if (choice === null || choice === undefined) return false;
   if (isPin(q)) return areasFound(q, choice) === q.regions.length;
   if (q.type === "slider") return sliderShare(q, choice) > 0;
+  if (q.type === "type") return typedRight(q, choice);
+  if (q.type === "puzzle") return puzzleRight(q.perm, choice);
   return choice === q.correct;
 }
 
@@ -683,6 +742,15 @@ export class GameRoom extends DurableObject {
     } else if (q.type === "slider") {
       if (typeof choice !== "number" || !Number.isFinite(choice) || choice < q.min || choice > q.max) return;
       choice = snap(choice, q);
+    } else if (q.type === "type") {
+      if (typeof choice !== "string") return;
+      choice = choice.replace(/\s+/g, " ").trim().slice(0, TYPE_MAX);
+      if (!choice) return;
+    } else if (q.type === "puzzle") {
+      // The order the player put the shown items in: each shown index exactly once.
+      const n = q.answers.length;
+      if (!Array.isArray(choice) || choice.length !== n || new Set(choice).size !== n ||
+        !choice.every((d) => Number.isInteger(d) && d >= 0 && d < n)) return;
     } else if (!Number.isInteger(choice) || choice < 0 || choice >= q.answers.length) {
       return;
     }
@@ -696,8 +764,9 @@ export class GameRoom extends DurableObject {
   async reveal() {
     const s = this.s;
     const q = s.quiz.questions[s.q];
+    const qq = this.withPerm(q);
     for (const p of Object.values(s.players)) {
-      p.right = isRight(q, p.choice);
+      p.right = isRight(qq, p.choice);
       // Pin questions give credit for each area found; quiz questions are all or nothing.
       const share = isPin(q) ? (p.choice === null ? 0 : areasFound(q, p.choice) / q.regions.length)
         : q.type === "slider" ? sliderShare(q, p.choice) : p.right ? 1 : 0;
@@ -749,9 +818,16 @@ export class GameRoom extends DurableObject {
       .sort((a, b) => b.score - a.score);
   }
 
+  // A puzzle question with this game's shuffle attached (the same for every player).
+  withPerm(q) {
+    return q.type === "puzzle" ? { ...q, perm: puzzlePerm(`${this.s.gid}:${this.s.q}`, q.answers.length) } : q;
+  }
+
   question() {
-    const q = this.s.quiz.questions[this.s.q];
-    return { type: q.type === "tf" || q.type === "slider" ? q.type : isPin(q) ? "pin" : "quiz", title: q.title, answers: q.answers || [], time: q.time, image: q.image,
+    const q = this.withPerm(this.s.quiz.questions[this.s.q]);
+    // Puzzle items go out shuffled: shown[i] = answers[perm[i]].
+    const answers = q.type === "puzzle" ? q.perm.map((k) => q.answers[k]) : q.type === "type" ? [] : q.answers || [];
+    return { type: ["tf", "slider", "type", "puzzle"].includes(q.type) ? q.type : isPin(q) ? "pin" : "quiz", title: q.title, answers, time: q.time, image: q.image,
       ...(isPin(q) ? { maxPins: q.regions.length } : {}),  // how many pins a player may drop (one per area)
       ...(q.type === "slider" ? { min: q.min, max: q.max, step: q.step, unit: q.unit } : {}) };
   }
@@ -771,6 +847,8 @@ export class GameRoom extends DurableObject {
       if (s.phase === "reveal") {
         if (isPin(q)) st.regions = q.regions;
         else if (q.type === "slider") Object.assign(st, { correct: q.answer, tolerance: MARGINS[q.margin] * (q.max - q.min) });
+        else if (q.type === "type") st.accepted = q.accepted;
+        else if (q.type === "puzzle") st.solution = q.answers;   // the right order
         else st.correct = q.correct;
       }
     }
@@ -787,6 +865,11 @@ export class GameRoom extends DurableObject {
             st.hits = players.filter((p) => p.right).length;
           } else if (q.type === "slider") {
             st.guesses = players.filter((p) => p.choice !== null).map((p) => ({ name: p.name, v: p.choice, ok: p.right }));
+            st.hits = players.filter((p) => p.right).length;
+          } else if (q.type === "type") {
+            st.typed = typedTally(players);
+            st.hits = players.filter((p) => p.right).length;
+          } else if (q.type === "puzzle") {
             st.hits = players.filter((p) => p.right).length;
           } else {
             st.counts = st.question.answers.map((_, i) => players.filter((p) => p.choice === i).length);

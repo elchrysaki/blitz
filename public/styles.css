@@ -75,8 +75,8 @@ em { font-style: normal; color: var(--accent); }  /* highlighted word: same face
    Text fields keep a plain native selection. */
 ::selection { background: transparent; color: var(--bg); }
 input::selection, textarea::selection { background: var(--accent); color: var(--bg); }
-.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .lchip, .stat { isolation: isolate; }
-.linkcard, .chip, .pill, .ppin, .standing, .waiting-chip, .set-group, .ans, .lchip, .stat { position: relative; }
+.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .lchip, .stat, .otile, .accept, .typed-chip, .typebox { isolation: isolate; }
+.linkcard, .chip, .pill, .ppin, .standing, .waiting-chip, .set-group, .ans, .lchip, .stat, .accept, .typed-chip, .typebox { position: relative; }
 .card { position: relative; }
 .hl-layer { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
 #hl { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
@@ -842,8 +842,8 @@ button.tile:active { transform: scale(.97); }
   .stats { grid-template-columns: minmax(0, 1fr); padding: 18px; }
   .stat-hero { padding: 4px; }
 }
+@media (max-width: 640px) { .nav .navlink.wide { display: none; } }  /* the bar gets crowded: Leaderboard is on the dashboard instead */
 @media (max-width: 480px) {
-  .nav .navlink.wide { display: none; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat b { font-size: 22px; }
   .step-art .buddy-art { width: 64px; height: 77px; }
@@ -859,3 +859,74 @@ button.tile:active { transform: scale(.97); }
 }
 .step .step-art .medal { color: var(--bg); margin: 0; font-weight: 800; }  /* beat the podium's ".step span" text style */
 .step .step-art .medal.m1 { color: var(--wall); }
+
+/* ---------- type answer & puzzle ---------- */
+.qcard.retype > :not(header) { animation: opt-in .42s var(--spring) both; }
+.puzzle-edit { list-style: none; padding: 0; grid-template-columns: minmax(0, 1fr); }
+.typed-edit .ans b { font-size: 16px; }
+
+/* puzzle rows: an answer tile laid out as a list */
+.order { list-style: none; padding: 0; margin: 0; width: min(620px, 100%); display: grid; gap: 10px; }
+.otile { position: relative; display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 12px 16px; border-radius: 20px;
+  background: var(--tone); color: var(--bg); font-size: clamp(17px, 2vw, 22px); font-weight: 650; line-height: 1.15; letter-spacing: -.02em;
+  animation: pop .32s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms); }
+.otile b { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: rgba(3, 42, 60, .16); font: 800 16px/1 var(--display); }
+.otile span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.otile small { flex: none; font: 800 13px var(--display); padding: 5px 10px; border-radius: 999px; background: rgba(3, 42, 60, .16); }
+.order.soft .otile { animation: none; min-height: 54px; font-size: 17px; }
+.order.reveal .otile { animation: order-in .5s var(--spring-bouncy, var(--ease)) both; animation-delay: calc(var(--i, 0) * 110ms); }
+@keyframes order-in { from { opacity: 0; transform: translateX(-26px) scale(.96); } }
+.order.reveal .otile b { background: var(--bg); color: var(--tone); }
+
+/* drag to reorder */
+.sortable .otile { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: transform .32s var(--spring), box-shadow .2s ease; }
+.sortable .otile:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+.sortable.dragging .otile { animation: none; }
+.sortable .otile.lifted { z-index: 2; cursor: grabbing; transition: box-shadow .2s ease; box-shadow: 0 18px 36px rgba(1, 16, 28, .5); }
+.sortable .otile.settle { animation: settle .45s var(--spring-bouncy, var(--ease)); }
+@keyframes settle { from { transform: scale(1.04); } }
+.grip { flex: none; width: 14px; height: 22px; opacity: .55;
+  background: radial-gradient(circle, currentColor 1.6px, transparent 2px) 0 0 / 7px 7px; }
+.sortable.locked .otile { opacity: .6; cursor: default; }
+.puzzleq .hint { text-align: center; margin: 0; }
+
+/* the typing field (players) and its stand-in on the host's screen */
+.typebox { display: flex; align-items: center; gap: 12px; width: min(560px, 100%); height: 68px; padding: 0 18px; border-radius: 22px;
+  background: var(--solid); border: 2px solid var(--edge); color: var(--ink); transition: border-color .2s ease, background-color .2s ease; }
+.typebox:focus-within { border-color: var(--ice); background: var(--solid-hi); }
+.typebox svg { flex: none; width: 28px; height: 28px; color: var(--vermilion-hi); }
+.typebox input { flex: 1; min-width: 0; height: 100%; background: none; border: 0; outline: 0; font: 650 22px var(--sans); color: var(--ink); }
+.typebox input::placeholder { color: rgba(246, 241, 233, .55); }
+.typecount { flex: none; color: var(--mute); font-size: 13px; font-variant-numeric: tabular-nums; }
+.typebox.ghosted { justify-content: center; height: 84px; font: 650 24px var(--display); color: var(--mute); }
+.typebox.ghosted span { display: inline-flex; align-items: center; gap: 4px; }
+.caret { display: inline-block; width: 3px; height: 28px; border-radius: 2px; background: var(--accent); animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.accepts, .typed { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.accept { display: inline-flex; align-items: center; height: 44px; padding: 0 18px; border-radius: 999px; background: var(--solid); border: 1.5px solid var(--good); font-weight: 650; }
+.accept.main { height: 58px; padding: 0 26px; background: var(--good); border-color: transparent; color: var(--bg); font: 800 26px var(--display); letter-spacing: -.02em;
+  animation: bounce .45s var(--spring-bouncy, var(--ease)) both; }
+.typed { width: min(720px, 100%); }
+.typed-chip { display: inline-flex; align-items: center; gap: 8px; height: var(--ctl-sm); padding: 0 6px 0 14px; border-radius: 999px;
+  background: var(--solid); border: 1.5px solid var(--edge-soft); font-weight: 600; animation: pop .3s var(--ease) both; }
+.typed-chip em { font: 800 13px var(--display); font-style: normal; min-width: 26px; height: 26px; display: grid; place-items: center; padding: 0 7px; border-radius: 999px; background: rgba(246, 241, 233, .12); }
+.typed-chip.ok { border-color: var(--good); }
+.typed-chip.ok em { background: var(--good); color: var(--bg); }
+.icon-avatar { background: var(--ice); padding: 22px; }
+.icon-avatar svg { width: 100%; height: 100%; color: var(--bg); }
+.pcard .order, .pcard .accepts { justify-self: center; }
+
+@media (max-width: 480px) {
+  .typebox { height: 60px; padding: 0 14px; }
+  .typebox input { font-size: 19px; }
+  .typecount { display: none; }
+  .otile { min-height: 58px; padding: 10px 12px; gap: 12px; }
+  .accept.main { font-size: 22px; height: 52px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .otile, .order.reveal .otile, .sortable .otile.settle, .accept.main, .typed-chip, .qcard.retype > :not(header) { animation: none !important; }
+  .sortable .otile { transition: none; }
+  .caret { animation: none; }
+}
+.otile { text-align: left; }

@@ -10,11 +10,13 @@ import json
 import math
 import os
 import queue
+import random
 import re
 import secrets
 import socket
 import threading
 import time
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -85,6 +87,20 @@ def clean_quiz(body, quiz_id=None, old=None):
             continue
         if q.get("type") == "slider":
             questions.append(dict({"type": "slider", "title": qtitle, "image": image, "time": limit}, **clean_slider(q, n)))
+            continue
+        if q.get("type") == "type":
+            accepted = q.get("accepted") if isinstance(q.get("accepted"), list) else []
+            accepted = [a for a in (str(a).strip()[:TYPE_MAX] for a in accepted if isinstance(a, (str, int, float))) if a]
+            if not 1 <= len(accepted) <= 4 or not all(norm(a) for a in accepted):
+                raise ValueError(f"Question {n}: write the right answer")
+            questions.append({"type": "type", "title": qtitle, "accepted": accepted, "image": image, "time": limit})
+            continue
+        if q.get("type") == "puzzle":
+            items = q.get("answers") if isinstance(q.get("answers"), list) else []
+            items = [str(a).strip()[:100] for a in items]
+            if not 2 <= len(items) <= 4 or not all(items):
+                raise ValueError(f"Question {n}: a puzzle needs 2 to 4 items")
+            questions.append({"type": "puzzle", "title": qtitle, "answers": items, "image": image, "time": limit})
             continue
         answers = q.get("answers")
         if not isinstance(answers, list):
@@ -204,6 +220,72 @@ def areas_found(q, choice):
     return sum(any(in_region(r, pt) for pt in pins_of(choice)) for r in q["regions"])
 
 
+# Type answer: case, accents, punctuation and extra spaces don't matter, and one slip of the
+# keyboard is forgiven in longer answers (6+ letters, no digits).
+TYPE_MAX = 40
+
+
+def norm(v):
+    v = "".join(c for c in unicodedata.normalize("NFD", str(v)) if unicodedata.category(c) != "Mn").lower()
+    return re.sub(r"[\W_]+", " ", v).strip()
+
+
+def one_edit(a, b):
+    if abs(len(a) - len(b)) > 1:
+        return False
+    i = j = edits = 0
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(a) > len(b):
+            i += 1
+        elif len(b) > len(a):
+            j += 1
+        else:
+            i += 1
+            j += 1
+    return edits + (len(a) - i) + (len(b) - j) <= 1
+
+
+def typed_right(q, v):
+    t = norm(v)
+    if not t:
+        return False
+    for a in q["accepted"]:
+        k = norm(a)
+        if t == k or (len(k) >= 6 and not re.search(r"\d", k) and one_edit(t, k)):
+            return True
+    return False
+
+
+def puzzle_perm(seed, n):
+    """Players see puzzle items shuffled, the same way for everyone in a game: shown[i] = answers[perm[i]].
+    Never shown already in order."""
+    perm = list(range(n))
+    random.Random(seed).shuffle(perm)
+    return [(i + 1) % n for i in range(n)] if perm == list(range(n)) else perm
+
+
+def puzzle_right(perm, choice):
+    return isinstance(choice, list) and len(choice) == len(perm) and all(perm[d] == k for k, d in enumerate(choice))
+
+
+def typed_tally(players):
+    """What players typed, grouped (ignoring case and accents), most common first."""
+    groups = {}
+    for p in players:
+        if not isinstance(p["choice"], str):
+            continue
+        g = groups.setdefault(norm(p["choice"]), {"text": p["choice"], "n": 0, "ok": p["right"]})
+        g["n"] += 1
+    return sorted(groups.values(), key=lambda g: (-g["n"], not g["ok"]))[:8]
+
+
 def is_right(q, choice):
     if choice is None:
         return False
@@ -211,6 +293,10 @@ def is_right(q, choice):
         return areas_found(q, choice) == len(q["regions"])
     if q.get("type") == "slider":
         return slider_share(q, choice) > 0
+    if q.get("type") == "type":
+        return typed_right(q, choice)
+    if q.get("type") == "puzzle":
+        return puzzle_right(q["perm"], choice)
     return choice == q["correct"]
 
 
@@ -404,6 +490,17 @@ class Game:
                     or not q["min"] <= choice <= q["max"]:
                 return
             choice = snap(choice, q)
+        elif q.get("type") == "type":
+            if not isinstance(choice, str):
+                return
+            choice = " ".join(choice.split())[:TYPE_MAX]
+            if not choice:
+                return
+        elif q.get("type") == "puzzle":
+            n = len(q["answers"])
+            if not isinstance(choice, list) or len(choice) != n or len(set(map(str, choice))) != n \
+                    or not all(isinstance(d, int) and not isinstance(d, bool) and 0 <= d < n for d in choice):
+                return
         elif isinstance(choice, bool) or not isinstance(choice, int) or not 0 <= choice < len(q["answers"]):
             return
         p["choice"], p["ms"] = choice, (time.time() - self.started) * 1000
@@ -415,7 +512,7 @@ class Game:
     def reveal(self):
         if self.timer:
             self.timer.cancel()
-        q = self.quiz["questions"][self.q]
+        q = self.with_perm(self.quiz["questions"][self.q])
         for p in self.players.values():
             p["right"] = is_right(q, p["choice"])
             # Pin questions give credit for each area found; quiz questions are all or nothing.
@@ -464,10 +561,15 @@ class Game:
                 for pid, p in self.players.items()]
         return sorted(rows, key=lambda r: -r["score"])
 
+    def with_perm(self, q):
+        """A puzzle question with this game's shuffle attached (the same for every player)."""
+        return dict(q, perm=puzzle_perm(f"{self.gid}:{self.q}", len(q["answers"]))) if q.get("type") == "puzzle" else q
+
     def question(self):
-        q = self.quiz["questions"][self.q]
-        out = {"type": q.get("type") if q.get("type") in ("tf", "slider") else "pin" if is_pin(q) else "quiz", "title": q["title"],
-               "answers": q.get("answers", []), "time": q["time"],
+        q = self.with_perm(self.quiz["questions"][self.q])
+        answers = [q["answers"][k] for k in q["perm"]] if q.get("type") == "puzzle" else [] if q.get("type") == "type" else q.get("answers", [])
+        out = {"type": q.get("type") if q.get("type") in ("tf", "slider", "type", "puzzle") else "pin" if is_pin(q) else "quiz", "title": q["title"],
+               "answers": answers, "time": q["time"],
                "image": image_url(self.quiz_id, self.quiz, self.q)}
         if is_pin(q):
             out["maxPins"] = len(q["regions"])  # how many pins a player may drop (one per area)
@@ -491,6 +593,10 @@ class Game:
                 elif q.get("type") == "slider":
                     s["correct"] = q["answer"]
                     s["tolerance"] = MARGINS[q["margin"]] * (q["max"] - q["min"])
+                elif q.get("type") == "type":
+                    s["accepted"] = q["accepted"]
+                elif q.get("type") == "puzzle":
+                    s["solution"] = q["answers"]  # the right order
                 else:
                     s["correct"] = q["correct"]
         if pid is None:
@@ -507,6 +613,10 @@ class Game:
                     elif q.get("type") == "slider":
                         s["guesses"] = [{"name": p["name"], "v": p["choice"], "ok": p["right"]}
                                         for p in self.players.values() if p["choice"] is not None]
+                        s["hits"] = sum(p["right"] for p in self.players.values())
+                    elif q.get("type") in ("type", "puzzle"):
+                        if q.get("type") == "type":
+                            s["typed"] = typed_tally(self.players.values())
                         s["hits"] = sum(p["right"] for p in self.players.values())
                     else:
                         s["counts"] = [picks.count(i) for i in range(len(s["question"]["answers"]))]

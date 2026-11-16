@@ -234,7 +234,19 @@
       return `<${tag} class="tile ${tone} ${o.cls || ''}" ${o.button ? `data-choice="${i}"` : ''}>
         <b>${kind === 'tf' ? (i ? '✕' : '✓') : L[i]}</b><span>${esc(a)}</span>${o.extra || ''}</${tag}>`;
     }).join('')}</div>`;
-  const TYPE_LABEL = { quiz: 'Quiz', tf: 'True / False', slider: 'Slider', pin: 'Pin' };
+  // A puzzle's items as numbered rows (the right order on reveal and in the preview).
+  // Each item keeps the colour and letter it had while shuffled (`shown` = the shuffled list), so the
+  // reveal reads as "B goes first, then D…". Without `shown`, rows are simply numbered.
+  const orderList = (items, cls = '', shown = null) => `<ol class="order ${cls}">${items.map((a, k) => {
+    const d = shown ? shown.indexOf(a) : k;
+    const mark = cls === 'shuffled' ? L[k] : k + 1;
+    return `<li class="otile t${d < 0 ? k : d}" style="--i:${k}"><b>${mark}</b><span>${esc(a)}</span>${shown && cls !== 'shuffled' ? `<small>${L[d]}</small>` : ''}</li>`;
+  }).join('')}</ol>`;
+  // The accepted answers of a Type answer question, as chips.
+  const acceptChips = (list) => `<div class="accepts">${list.map((a, k) => `<span class="accept ${k ? '' : 'main'}">${esc(a)}</span>`).join('')}</div>`;
+  const TYPE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><text x="16" y="23" text-anchor="middle" font-family="Bricolage Grotesque, DM Sans, sans-serif" font-weight="800" font-size="19" fill="currentColor">Aa</text></svg>';
+  const PUZZLE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 8h20M6 16h20M6 24h20" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
+  const TYPE_LABEL = { quiz: 'Quiz', tf: 'True / False', type: 'Type answer', puzzle: 'Puzzle', slider: 'Slider', pin: 'Pin' };
 
   const boardRows = (players, limit) => players.slice(0, limit).map((p, i) => `
     <li><span class="rank">${i + 1}</span><span class="name">${esc(p.name)}</span>
@@ -599,8 +611,17 @@
   // ---------- create ----------
 
   const blankQuestion = () => ({ type: 'quiz', title: '', image: null, answers: ['', '', '', ''], correct: 0, regions: [], time: 20,
-    min: 0, max: 100, step: 1, answer: 50, unit: '', margin: 'medium' });
-  const TYPES = [['quiz', 'Quiz'], ['tf', 'True/False'], ['slider', 'Slider'], ['pin', 'Pin']];
+    min: 0, max: 100, step: 1, answer: 50, unit: '', margin: 'medium', accepted: ['', '', '', ''] });
+  // Question types, with the one-line explanation shown in the type picker.
+  const TYPES = [
+    ['quiz', 'Quiz', 'Pick the right answer from 2–4'],
+    ['tf', 'True / False', 'Two big buttons: true or false'],
+    ['type', 'Type answer', 'Players type it in; you choose what counts'],
+    ['puzzle', 'Puzzle', 'Put 2–4 items in the right order'],
+    ['slider', 'Slider', 'Guess a number on a scale'],
+    ['pin', 'Pin', 'Drop a pin on the right part of a picture'],
+  ];
+  const TYPE_MAX = 40;   // longest typed answer
   const MARGIN_LABELS = [['exact', 'Exact'], ['low', '±5%'], ['medium', '±10%'], ['high', '±20%']];  // of the range
   const MARGIN_SHARE = { exact: 0, low: 0.05, medium: 0.1, high: 0.2 };
   const STEPS = [0.01, 0.1, 0.5, 1, 5, 10, 100];
@@ -652,6 +673,8 @@
       : q.type === 'tf' ? { ...blankQuestion(), type: 'tf', title: q.title, image: q.image, correct: q.correct, time: q.time }
       : q.type === 'slider' ? { ...blankQuestion(), type: 'slider', title: q.title, image: q.image, time: q.time,
         min: q.min, max: q.max, step: q.step, answer: q.answer, unit: q.unit || '', margin: q.margin }
+      : q.type === 'type' ? { ...blankQuestion(), type: 'type', title: q.title, image: q.image, time: q.time, accepted: [...q.accepted, '', '', ''].slice(0, 4) }
+      : q.type === 'puzzle' ? { ...blankQuestion(), type: 'puzzle', title: q.title, image: q.image, time: q.time, answers: [...q.answers, '', '', ''].slice(0, 4) }
       : { ...blankQuestion(), title: q.title, image: q.image, answers: [...q.answers, '', '', ''].slice(0, 4), correct: q.correct, time: q.time })),
   });
 
@@ -816,14 +839,13 @@
       <section class="card qcard" data-q="${i}">
         <header>
           <span class="num">${String(i + 1).padStart(2, '0')}</span>
-          <div class="seg" role="group" aria-label="Question type">
-            ${TYPES.map(([t, label]) => `<button data-act="type" data-type="${t}" class="${q.type === t ? 'on' : ''}" aria-pressed="${q.type === t}">${label}</button>`).join('')}
-          </div>
+          <button class="chip-btn type-chip" data-pick="qtype" aria-haspopup="dialog" aria-expanded="false" aria-label="Question type: ${TYPE_LABEL[q.type]}">
+            <span>Type</span><b class="set-val" data-for="qtype">${TYPE_LABEL[q.type]}</b>${UPDOWN}</button>
           <span class="grow"></span>
           <button class="chip-btn" data-pick="time" aria-haspopup="dialog" aria-expanded="false" aria-label="Time to answer: ${q.time} seconds">
             <span>Time</span><b class="set-val" data-for="time">${q.time}s</b>${UPDOWN}</button>
         </header>
-        <input class="q-input" data-f="title" maxlength="200" placeholder="${{ pin: 'e.g. Tap the ugliest part of this UI', tf: 'e.g. The Moon has its own light', slider: 'e.g. How tall is the Eiffel Tower?' }[q.type] || 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
+        <input class="q-input" data-f="title" maxlength="200" placeholder="${{ pin: 'e.g. Tap the ugliest part of this UI', tf: 'e.g. The Moon has its own light', slider: 'e.g. How tall is the Eiffel Tower?', type: 'e.g. What’s the capital of Australia?', puzzle: 'e.g. Put these planets in order from the Sun' }[q.type] || 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
         ${picture}
         ${pin ? `<div class="pinrow"><p class="hint">${!q.image ? 'Add a picture, then drag on it to mark the right area.'
           : regions.length ? `${regions.length} area${regions.length === 1 ? '' : 's'} marked — players get ${regions.length} pin${regions.length === 1 ? '' : 's'} and need one in every area for full points. Drag to add more.`
@@ -853,7 +875,23 @@
           </div>
         </div>
         <div class="sl-preview">${sliderPreview(q)}</div>
-        <p class="hint">Players drag a slider to their guess. Spot on scores full points; inside the shaded band, the closer the better.</p>` : `
+        <p class="hint">Players drag a slider to their guess. Spot on scores full points; inside the shaded band, the closer the better.</p>` : q.type === 'type' ? `
+        <div class="answers-edit typed-edit">
+          ${q.accepted.map((a, k) => `
+            <div class="ans t1">
+              <b>${k ? '+' : '✓'}</b>
+              <input data-f="accepted" data-k="${k}" maxlength="${TYPE_MAX}" placeholder="${k ? 'Also accept (optional)' : 'Right answer'}" value="${esc(a)}" aria-label="${k ? `Also accept ${k}` : 'Right answer'}">
+            </div>`).join('')}
+        </div>
+        <p class="hint">Players type their answer (up to ${TYPE_MAX} characters). Capitals, accents and punctuation don’t matter, and one typo is forgiven in answers of 6+ letters. Add other spellings players might use.</p>` : q.type === 'puzzle' ? `
+        <ol class="answers-edit puzzle-edit">
+          ${q.answers.map((a, k) => `
+            <li class="ans t${k}">
+              <b>${k + 1}</b>
+              <input data-f="answer" data-k="${k}" maxlength="100" placeholder="${k < 2 ? `${['First', 'Second'][k]} item` : `${['Third', 'Fourth'][k - 2]} item (optional)`}" value="${esc(a)}" aria-label="Item ${k + 1}">
+            </li>`).join('')}
+        </ol>
+        <p class="hint">Write the items in the right order, top to bottom. Players see them shuffled and drag them into place; only the exact order scores.</p>` : `
         <div class="answers-edit">
           ${q.answers.map((a, k) => `
             <div class="ans t${k}">
@@ -879,7 +917,7 @@
       const q = d.questions[i];
       const card = list.querySelector(`[data-q="${i}"]`);
       if (!card) return;
-      const show = { time: `${q.time}s`, min: withUnit(q.min, q.unit), max: withUnit(q.max, q.unit), answer: withUnit(q.answer, q.unit),
+      const show = { time: `${q.time}s`, qtype: TYPE_LABEL[q.type], min: withUnit(q.min, q.unit), max: withUnit(q.max, q.unit), answer: withUnit(q.answer, q.unit),
         unit: q.unit || 'None', step: numFmt(q.step), margin: marginText(q.margin) };
       card.querySelectorAll('.set-val').forEach((el) => {
         if (el.textContent !== show[el.dataset.for]) { el.textContent = show[el.dataset.for]; bump(el); }
@@ -940,6 +978,7 @@
       const q = qOf(e.target);
       if (f === 'title') q.title = e.target.value;
       else if (f === 'answer') q.answers[+e.target.dataset.k] = e.target.value;
+      else if (f === 'accepted') q.accepted[+e.target.dataset.k] = e.target.value;
       else if (f === 'correct') q.correct = +e.target.value;
       save();
     });
@@ -954,6 +993,17 @@
         const q = d.questions[i];
         const field = pickBtn.dataset.pick;
         const set = (v) => { q[field] = v; save(); paintCard(i); };
+        if (field === 'qtype') {
+          return openPicker(pickBtn, { title: 'Question type', kind: 'choices', value: q.type, options: TYPES, onChange: (v) => {
+            if (q.type === v) return;
+            q.type = v;
+            if (v === 'tf' && q.correct > 1) q.correct = 0;
+            q.accepted = q.accepted || ['', '', '', ''];
+            save(); draw();
+            const c = list.querySelector(`[data-q="${i}"]`);
+            c?.classList.add('retype'); setTimeout(() => c?.classList.remove('retype'), 500);
+          } });
+        }
         const specs = {
           time: { title: 'Time to answer', kind: 'choices', value: q.time, options: TIMES.map((t) => [t, `${t} seconds`]), onChange: (v) => set(+v) },
           min: { title: 'From', kind: 'number', value: q.min, step: q.step, unit: q.unit, note: 'The lowest value on the slider.', onChange: (v) => set(v) },
@@ -1050,6 +1100,20 @@
         }
         if (q.type === 'tf') {
           payload.questions.push({ type: 'tf', title: q.title.trim(), image: q.image, correct: q.correct ? 1 : 0, time: q.time });
+          continue;
+        }
+        if (q.type === 'type') {
+          const accepted = q.accepted.map((a) => a.trim()).filter(Boolean);
+          if (!accepted.length) return toast(`Question ${n}: write the right answer`);
+          payload.questions.push({ type: 'type', title: q.title.trim(), image: q.image, time: q.time, accepted });
+          continue;
+        }
+        if (q.type === 'puzzle') {
+          const items = q.answers.map((a) => a.trim());
+          const filled = items.filter(Boolean);
+          if (filled.length < 2) return toast(`Question ${n}: a puzzle needs at least 2 items`);
+          if (items.slice(0, filled.length).some((a) => !a)) return toast(`Question ${n}: fill the puzzle items from the top, without gaps`);
+          payload.questions.push({ type: 'puzzle', title: q.title.trim(), image: q.image, time: q.time, answers: filled });
           continue;
         }
         if (q.type === 'slider') {
@@ -1162,6 +1226,14 @@
                 ? `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
                    ${numberLine(q, { answer: q.answer, tolerance: MARGIN_SHARE[q.margin] * (q.max - q.min) })}
                    <p class="hint">Right answer ${esc(withUnit(q.answer, q.unit))}${q.margin === 'exact' ? ', exact guesses only' : '; guesses in the shaded band score too'}.</p>`
+                : q.type === 'type'
+                ? `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+                   ${acceptChips(q.accepted)}
+                   <p class="hint">Players type their answer. ${q.accepted.length > 1 ? 'Any of these counts' : 'This counts'}, ignoring capitals, accents and a small typo.</p>`
+                : q.type === 'puzzle'
+                ? `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+                   ${orderList(q.answers, 'soft')}
+                   <p class="hint">The right order. Players see the items shuffled; only the exact order scores.</p>`
                 : `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
                    ${tiles(q.answers, (k) => (k === q.correct ? { cls: 'right', extra: '<em>✓ Correct</em>' } : { cls: 'soft' }), q.type)}`}
             </section>`).join('')}
@@ -1242,6 +1314,18 @@
                ? `${numberLine(q, { answer: s.correct, tolerance: s.tolerance, guesses: s.guesses })}
                   <p class="pinstat"><strong>${s.hits}</strong> of ${s.count} ${s.tolerance ? 'were close enough' : 'got it exactly'}</p>`
                : `${numberLine(q)}<p class="pinstat">Somewhere between <strong>${esc(withUnit(q.min, q.unit))}</strong> and <strong>${esc(withUnit(q.max, q.unit))}</strong></p>`}</div>`
+          : q.type === 'type'
+          ? `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+             ${reveal
+               ? `${acceptChips(s.accepted)}
+                  ${s.typed.length ? `<div class="typed">${s.typed.map((t) => `<span class="typed-chip ${t.ok ? 'ok' : ''}">${esc(t.text)}<em>${t.n}</em></span>`).join('')}</div>` : ''}
+                  <p class="pinstat"><strong>${s.hits}</strong> of ${s.count} typed it right</p>`
+               : `<div class="typebox ghosted" aria-hidden="true">${TYPE_ICON}<span>Type your answer<i class="caret"></i></span></div>`}`
+          : q.type === 'puzzle'
+          ? `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+             ${reveal
+               ? `${orderList(s.solution, 'reveal', q.answers)}<p class="pinstat"><strong>${s.hits}</strong> of ${s.count} got the order right</p>`
+               : `${orderList(q.answers, 'shuffled')}<p class="pinstat">Shuffled — players drag them into the right order</p>`}`
           : q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : '';
         app.innerHTML = `
           <main class="page stage ${reveal ? 'is-reveal' : ''} ${pin ? 'pinq' : ''}">
@@ -1264,7 +1348,7 @@
                 ? `<aside class="card side"><p class="eyebrow">Leaderboard</p><ol class="board">${boardRows(s.players, 5)}</ol></aside>`
                 : '<div class="clock"><span data-secs></span></div>'}
             </section>
-            ${pin || q.type === 'slider' ? '' : tiles(q.answers, (i) => (!reveal ? {} : {
+            ${pin || ['slider', 'type', 'puzzle'].includes(q.type) ? '' : tiles(q.answers, (i) => (!reveal ? {} : {
               cls: i === s.correct ? 'right' : 'dimmed',
               extra: `<em>${i === s.correct ? '✓ ' : ''}${s.counts[i]}</em>`,
             }), q.type)}
@@ -1520,6 +1604,134 @@
         return;
       }
 
+      // Shared top of a player's question screen.
+      const playerHead = (q) => `
+            <div class="timerbar"><i data-bar></i></div>
+            <header class="bar">
+              <span class="pill">${s.qIndex + 1} / ${s.total}</span>
+              <span class="grow"></span>
+              <span class="pill timer"><span data-secs></span>s</span>
+            </header>`;
+
+      if (s.phase === 'question' && s.choice === null && s.question.type === 'type') {
+        const q = s.question;
+        app.innerHTML = `
+          <main class="page stage player typeq">
+            ${playerHead(q)}
+            <section class="qwrap"><div class="qmain">
+              <h1 class="qtitle">${esc(q.title)}</h1>
+              ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+              <form class="typebox" id="typeform" autocomplete="off">
+                ${TYPE_ICON}
+                <input id="typed" maxlength="${TYPE_MAX}" placeholder="Type your answer" aria-label="Your answer"
+                  autocapitalize="sentences" autocorrect="off" spellcheck="false" enterkeyhint="send">
+                <span class="typecount" id="tcount">0/${TYPE_MAX}</span>
+              </form>
+            </div></section>
+            <div class="lockbar"><button class="btn primary" id="lock" disabled>Lock in →</button></div>
+          </main>`;
+        const input = $('#typed');
+        const sync = () => { $('#lock').disabled = !input.value.trim(); $('#tcount').textContent = `${input.value.length}/${TYPE_MAX}`; };
+        input.oninput = sync;
+        setTimeout(() => input.focus({ preventScroll: true }), 60);
+        const send = () => {
+          const v = input.value.trim();
+          if (!v || $('#lock').disabled) return;
+          $('#lock').disabled = true; input.disabled = true; buzz(12);
+          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: v })
+            .catch((err) => { toast(err.message); input.disabled = false; sync(); });
+        };
+        $('#typeform').onsubmit = (e) => { e.preventDefault(); send(); };
+        $('#lock').onclick = send;
+        return;
+      }
+
+      if (s.phase === 'question' && s.choice === null && s.question.type === 'puzzle') {
+        const q = s.question;
+        let order = q.answers.map((_, i) => i);   // shown indices, top to bottom
+        app.innerHTML = `
+          <main class="page stage player puzzleq">
+            ${playerHead(q)}
+            <section class="qwrap"><div class="qmain">
+              <h1 class="qtitle">${esc(q.title)}</h1>
+              ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
+              <ol class="order sortable" id="sort" aria-label="Drag the items into the right order"></ol>
+              <p class="hint">Drag to reorder, top to bottom.</p>
+            </div></section>
+            <div class="lockbar"><button class="btn primary" id="lock">Lock in →</button></div>
+          </main>`;
+        const box = $('#sort');
+        const paint = (focus) => {
+          box.innerHTML = order.map((d, k) => `
+            <li class="otile t${d}" data-d="${d}" tabindex="0" aria-label="${k + 1}: ${esc(q.answers[d])}. Use the arrow keys to move it.">
+              <b>${L[d]}</b><span>${esc(q.answers[d])}</span><i class="grip" aria-hidden="true"></i></li>`).join('');
+          if (focus !== undefined) box.children[focus]?.focus({ preventScroll: true });
+        };
+        paint();
+        const move = (from, to, focus) => {
+          if (to < 0 || to >= order.length || to === from) return;
+          const [d] = order.splice(from, 1);
+          order.splice(to, 0, d);
+          paint(focus ? to : undefined);
+          box.children[to]?.classList.add('settle');
+          buzz(8);
+        };
+        box.addEventListener('keydown', (e) => {
+          const li = e.target.closest('li');
+          if (!li || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+          e.preventDefault();
+          const k = [...box.children].indexOf(li);
+          move(k, k + (e.key === 'ArrowUp' ? -1 : 1), true);
+        });
+        // Drag: the item follows the finger; the others slide out of its way; let go to drop it there.
+        box.addEventListener('pointerdown', (e) => {
+          const li = e.target.closest('li');
+          if (!li || box.classList.contains('locked') || e.button > 0) return;
+          e.preventDefault();
+          const items = [...box.children];
+          const from = items.indexOf(li);
+          const rects = items.map((el) => el.getBoundingClientRect());
+          const gap = items.length > 1 ? rects[1].top - rects[0].bottom : 0;
+          const room = rects[from].height + gap;   // how far the others slide to make space (rows can differ in height)
+          const y0 = e.clientY;
+          let to = from;
+          li.classList.add('lifted');
+          box.classList.add('dragging');
+          li.setPointerCapture(e.pointerId);
+          buzz(6);
+          const onMove = (ev) => {
+            const dy = Math.max(rects[0].top - rects[from].top - 12, Math.min(rects.at(-1).bottom - rects[from].bottom + 12, ev.clientY - y0));
+            li.style.transform = `translateY(${dy}px) scale(1.03)`;
+            // Its new place: after every other row whose middle it has passed.
+            const mid = rects[from].top + rects[from].height / 2 + dy;
+            const next = rects.filter((r, k) => k !== from && r.top + r.height / 2 < mid).length;
+            if (next !== to) { to = next; buzz(4); }
+            items.forEach((el, k) => {
+              if (el === li) return;
+              const shift = from < to && k > from && k <= to ? -room : from > to && k < from && k >= to ? room : 0;
+              el.style.transform = shift ? `translateY(${shift}px)` : '';
+            });
+          };
+          const onUp = () => {
+            li.removeEventListener('pointermove', onMove);
+            li.removeEventListener('pointerup', onUp);
+            li.removeEventListener('pointercancel', onUp);
+            box.classList.remove('dragging');
+            if (to === from) { li.classList.remove('lifted'); li.style.transform = ''; return; }
+            move(from, to);
+          };
+          li.addEventListener('pointermove', onMove);
+          li.addEventListener('pointerup', onUp);
+          li.addEventListener('pointercancel', onUp);
+        });
+        $('#lock').onclick = () => {
+          $('#lock').disabled = true; box.classList.add('locked'); buzz(12);
+          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: order })
+            .catch((err) => { toast(err.message); $('#lock').disabled = false; box.classList.remove('locked'); });
+        };
+        return;
+      }
+
       if (s.phase === 'question' && s.choice === null) {
         const q = s.question;
         app.innerHTML = `
@@ -1552,6 +1764,8 @@
           ${s.question.type === 'pin' ? `<div class="avatar pin-avatar">${PIN}</div>`
             : s.question.type === 'slider' ? `<div class="avatar slider-avatar">${esc(withUnit(s.choice, s.question.unit))}</div>`
             : s.question.type === 'tf' ? `<div class="avatar ${s.choice ? 't0' : 't1'}">${s.choice ? '✕' : '✓'}</div>`
+            : s.question.type === 'type' ? `<div class="avatar icon-avatar">${TYPE_ICON}</div><p class="lede">“${esc(s.choice)}”</p>`
+            : s.question.type === 'puzzle' ? `<div class="avatar icon-avatar">${PUZZLE_ICON}</div>`
             : `<div class="avatar t${s.choice}">${L[s.choice]}</div>`}
           <h1 class="display">Locked <em>in.</em></h1>
           ${waitingChip('Waiting for everyone else')}`);
@@ -1564,7 +1778,14 @@
         const areas = pin ? s.regions.length : 0;
         const partial = pin && !right && s.found > 0;
         const exact = slider && s.choice !== null && Math.abs(s.choice - s.correct) < 1e-9;
-        const why = slider ? (s.choice === null ? `The answer was <strong>${esc(withUnit(s.correct, s.question.unit))}</strong>.`
+        const typed = s.question.type === 'type';
+        const puzzle = s.question.type === 'puzzle';
+        const why = typed ? (right ? (s.accepted.some((a) => a.trim().toLowerCase() === String(s.choice).trim().toLowerCase())
+              ? 'Correct — nicely done.' : `Close enough — <strong>${esc(s.accepted[0])}</strong> counts.`)
+            : s.choice === null ? `The answer was <strong>${esc(s.accepted[0])}</strong>.`
+            : `The answer was <strong>${esc(s.accepted[0])}</strong> · you typed “${esc(s.choice)}”.`)
+          : puzzle ? (right ? 'Perfect order.' : s.choice === null ? 'Here’s the right order.' : 'Not quite the right order. Here it is:')
+          : slider ? (s.choice === null ? `The answer was <strong>${esc(withUnit(s.correct, s.question.unit))}</strong>.`
             : `The answer was <strong>${esc(withUnit(s.correct, s.question.unit))}</strong> · you said ${esc(withUnit(s.choice, s.question.unit))}.${exact ? ' Spot on!' : right ? ' Close enough.' : ''}`)
           : right ? (pin ? (areas > 1 ? `You found all ${areas} areas.` : 'Right on target.') : 'Correct — nicely done.')
           : pin ? (s.choice === null ? `Here’s where the right area${areas > 1 ? 's were' : ' was'}.`
@@ -1578,6 +1799,7 @@
           ${pin ? pinBox(s.question.image, s.regions.map((r) => regionEl(r)).join('')
             + pinsOf(s.choice).map((pt) => marker(pt[0], pt[1], `drop-in ${s.regions.some((r) => inRegion(r, pt)) ? 'ok' : 'miss'}`)).join(''), 'result') : ''}
           ${slider ? numberLine(s.question, { answer: s.correct, tolerance: s.tolerance, you: s.choice }) : ''}
+          ${puzzle && !right ? orderList(s.solution, 'reveal', s.question.answers) : ''}
           <p class="standing">${ordinal(s.rank)} of ${s.count} · ${fmt(s.score)} pts</p>`);
       }
 
@@ -1641,7 +1863,7 @@
   // surface its line sits on (card, tile, nav, or the page), above that surface's background
   // and below its text. Only does work while something is selected.
   // Anything with its own solid background is a surface: the pill goes above that background, under its text.
-  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat';
+  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox';
   const pageLayer = document.createElement('div');
   pageLayer.id = 'hl';
   pageLayer.setAttribute('aria-hidden', 'true');
