@@ -17,7 +17,7 @@ Each quiz can also have an **intro picture**, added under the title in the edito
 
 Each browser gets a private random cookie (`blitz_uid`, HttpOnly). Everything tied to it is kept for **7 days after your last visit**, and every visit adds another 7 days:
 
-- **Dashboard** (`/dashboard`): your quizzes, with Host, Edit and Delete. Below them, the games you recently played, with your rank and score. If a game is still running, you get a **Rejoin** button.
+- **Dashboard** (`/dashboard`): your quizzes, with Host, Edit and Delete. Below them, the games you joined in the last 14 days, with your rank and score. While a game still exists (its lobby is open or it is running), its row shows the PIN and tapping it takes you straight back in.
 - Quizzes can only be edited, hosted or deleted from the browser that made them.
 - After 7 days without a visit, the server forgets that browser and deletes its quizzes.
 - **Quizzes nobody plays for 15 days are deleted** with their pictures, to save space. The 15 days count from the later of the last finished game and the last edit. A quiz with a game running right now is never deleted. In the last 5 days, the dashboard shows "Deleted in N days unless it's played".

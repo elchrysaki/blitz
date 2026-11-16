@@ -13,7 +13,8 @@ import { DurableObject } from "cloudflare:workers";
 const DAY = 86400;
 const WEEK = 7 * DAY;
 const GAME_TTL = 4 * 3600; // a live game lasts at most 4 hours
-const QUIZ_TTL = 15 * DAY; // a quiz nobody has played or edited for 15 days is deleted
+const QUIZ_TTL = 15 * DAY;
+const PLAYED_TTL = 14 * DAY; // games you joined stay in "Recently played" for 14 days // a quiz nobody has played or edited for 15 days is deleted
 const COVER = 999;         // picture slot for the quiz's intro picture
 const COOKIE = "blitz_uid";
 const TIMES = [10, 20, 30, 60];
@@ -264,6 +265,7 @@ async function prune(env) {
   const stale = await env.DB.prepare("SELECT uid FROM users WHERE seen < ? LIMIT 500").bind(now() - WEEK).all();
   for (const { uid } of stale.results) await forget(env, uid);
   await pruneQuizzes(env);
+  await env.DB.prepare("DELETE FROM played WHERE at < ?").bind(now() - PLAYED_TTL).run();
   await env.DB.prepare("DELETE FROM games WHERE created < ?").bind(now() - DAY).run();
 }
 
@@ -279,7 +281,7 @@ async function getMe(env, uid) {
       "SELECT p.*, g.gid AS live_gid FROM played p " +
       "LEFT JOIN games g ON g.gid = p.gid AND g.done = 0 AND g.created > ? " +
       "WHERE p.uid = ? AND p.at > ? ORDER BY p.at DESC LIMIT 30",
-    ).bind(t - GAME_TTL, uid, t - WEEK),
+    ).bind(t - GAME_TTL, uid, t - PLAYED_TTL),
   ]);
   const user = userRows.results[0];
   if (user && user.seen < t - WEEK) { // not seen for 7 days: forget them

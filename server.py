@@ -28,6 +28,7 @@ os.makedirs(QUIZZES, exist_ok=True)
 os.makedirs(USERS, exist_ok=True)
 
 WEEK = 7 * 24 * 3600
+PLAYED_TTL = 14 * 24 * 3600  # games you joined stay in "Recently played" for 14 days
 QUIZ_TTL = 15 * 24 * 3600  # a quiz nobody has played or edited for 15 days is deleted
 COVER = 999                # picture slot for the quiz's intro picture
 COOKIE = "blitz_uid"
@@ -278,7 +279,7 @@ def load_user(uid):
 
 def save_user(uid, u):
     u["seen"] = time.time()
-    u["played"] = [e for e in u["played"] if e["at"] > time.time() - WEEK][:30]
+    u["played"] = [e for e in u["played"] if e["at"] > time.time() - PLAYED_TTL][:30]
     write_json(user_path(uid), u)
 
 

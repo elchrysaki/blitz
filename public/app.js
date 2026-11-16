@@ -138,6 +138,16 @@
       .replaceAll(`fill="${hair}"`, `fill="url(#hr${id})"`)
       .replaceAll(`fill="${top}"`, `fill="url(#tp${id})"`);
   }
+  // A sand timer that drains and flips: the "we're waiting" signal.
+  const HOURGLASS = `<svg class="hourglass" viewBox="0 0 32 40" aria-hidden="true">
+      <path d="M7 3h18M7 37h18" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+      <path d="M9 4c0 9 6 11 6 16S9 27 9 36M23 4c0 9-6 11-6 16s6 7 6 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <path class="sand-top" d="M11 9h10c-.6 4-3.6 6.5-5 8.6C14.6 15.5 11.6 13 11 9Z"/>
+      <path class="sand-bottom" d="M11 34h10c0-3.6-2.6-6-5-7.4-2.4 1.4-5 3.8-5 7.4Z"/>
+      <path class="sand-stream" d="M16 18.5v8" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>`;
+  const waitingChip = (text) => `<p class="waiting-chip" role="status">${HOURGLASS}<span>${text}<span class="dots"></span></span></p>`;
+  const waitCount = (n) => (n > 1 ? `You and ${n - 1} other${n === 2 ? '' : 's'} are in` : 'You’re the first one here');
   const buddy = (name, look, cls = '') => `<div class="buddy ${cls}" data-name="${esc(name)}">${avatar(look || name)}<span>${esc(name)}</span></div>`;
 
   const PIN = '<svg viewBox="0 0 24 32" aria-hidden="true"><path d="M12 0C5.4 0 0 5.2 0 11.7 0 20.4 12 32 12 32s12-11.6 12-20.3C24 5.2 18.6 0 12 0z"/><circle cx="12" cy="11.5" r="4.5"/></svg>';
@@ -293,14 +303,21 @@
         </div>
       </article>`;
 
-    const playedRow = (e) => `
+    // While the game still exists (lobby open or running) the whole row takes you back in.
+    const playedRow = (e) => e.live ? `
+      <li><a class="prow is-live" href="/play?pin=${e.pin}" data-link aria-label="Rejoin ${esc(e.quizTitle)}, PIN ${pinText(e.pin)}">
+        <span class="pavatar"><i class="livedot"></i></span>
+        <span class="pmain"><strong>${esc(e.quizTitle)}</strong>
+          <small>as ${esc(e.name)} · ${ago(e.at)} · <b>Live now</b></small></span>
+        <span class="ppin">PIN ${pinText(e.pin)}</span>
+        <span class="btn primary small">Rejoin →</span>
+      </a></li>` : `
       <li class="prow">
-        <span class="pavatar">${e.live ? '<i class="livedot"></i>' : e.done && e.rank ? ordinal(e.rank) : '–'}</span>
+        <span class="pavatar">${e.done && e.rank ? ordinal(e.rank) : '–'}</span>
         <span class="pmain"><strong>${esc(e.quizTitle)}</strong>
           <small>as ${esc(e.name)} · ${ago(e.at)}</small></span>
-        ${e.live ? `<a class="btn primary small" href="/play?pin=${e.pin}" data-link>Rejoin →</a>`
-          : e.done ? `<span class="pscore">${fmt(e.score)} pts<small>${ordinal(e.rank)} of ${e.count}</small></span>`
-          : '<span class="pscore dim">Left early</span>'}
+        ${e.done ? `<span class="pscore">${fmt(e.score)} pts<small>${ordinal(e.rank)} of ${e.count}</small></span>`
+          : '<span class="pscore dim">Game ended<small>you left early</small></span>'}
       </li>`;
 
     // Draw at once from the last copy this browser saw, then refresh from the server.
@@ -343,7 +360,8 @@
         </section>
         <section class="dash-sec">
           <div class="sec-head"><h2>Recently played</h2><span class="count">${me.played.length}</span></div>
-          ${me.played.length ? `<ul class="card plist">${me.played.map(playedRow).join('')}</ul>`
+          ${me.played.length ? `<ul class="card plist">${me.played.map(playedRow).join('')}</ul>
+            <p class="hint">Games you joined in the last 14 days. Tap a live one to jump back in.</p>`
             : '<p class="empty">Games you join from this browser show up here.</p>'}
         </section>
       </main>`;
@@ -1009,7 +1027,19 @@
           <section class="create-head">
             <p class="eyebrow">Preview · ${n} question${n === 1 ? '' : 's'}</p>
             <h1 class="display">${esc(quiz.title)}</h1>
-            <p class="lede">This is what players will see. When it looks right, open the lobby to get your link and PIN.</p>
+            <p class="lede">Check your questions below. When you're happy, open the lobby to let people in.</p>
+          </section>
+          <section class="card readybox" aria-label="How hosting works">
+            <div class="ready-text">
+              <p class="eyebrow">Ready to play?</p>
+              <h2>Opening the lobby starts a live game.</h2>
+              <ol class="ready-steps">
+                <li><b>1</b><span><strong>You get a PIN and a link</strong> to show on your screen or send to people.</span></li>
+                <li><b>2</b><span><strong>Players join on their phones</strong> and pop in as characters while they wait.</span></li>
+                <li><b>3</b><span><strong>Press Start when everyone's in.</strong> You run each question from this screen.</span></li>
+              </ol>
+            </div>
+            <button class="btn primary ready-go" id="open3">Open lobby →</button>
           </section>
           ${quiz.cover ? `<figure class="intro-banner"><img src="${quiz.cover}" alt="" decoding="async"><figcaption>Intro · shown in the lobby</figcaption></figure>` : ''}
           ${quiz.questions.map((q, i) => `
@@ -1030,7 +1060,7 @@
             </section>`).join('')}
           <div class="cta end"><button class="btn primary" id="open2">Open lobby →</button></div>
         </main>`;
-      $('#open').onclick = $('#open2').onclick = openLobby;
+      $('#open').onclick = $('#open2').onclick = $('#open3').onclick = openLobby;
     }
 
     function renderHost(s, session) {
@@ -1056,9 +1086,10 @@
               <div class="card joinbox">
                 <p class="eyebrow">Join at <strong>${esc(origin.replace(/^https?:\/\//, ''))}</strong></p>
                 <div class="pin" aria-label="Game PIN">${pinText(s.pin)}</div>
-                <div class="linkrow">
-                  <input readonly value="${esc(link)}" aria-label="Join link" id="link">
-                  <button class="btn" id="copy">Copy link</button>
+                <div class="linkcard">
+                  <svg class="link-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4L12 5.6M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                  <span class="link-text" id="link"><span class="nb">${esc(link.replace(/^https?:\/\//, '').replace(/\/play.*/, ''))}</span><wbr><span class="nb">${esc(link.replace(/^.*(\/play)/, '$1'))}</span></span>
+                  <button class="btn small" id="copy">Copy</button>
                 </div>
               </div>
               <div class="roster">
@@ -1070,10 +1101,17 @@
               </div>
             </section>
           </main>`;
-        $('#link').onclick = (e) => e.target.select();
         $('#copy').onclick = async () => {
-          try { await navigator.clipboard.writeText(link); toast('Link copied'); }
-          catch { $('#link').select(); toast('Press ⌘C to copy'); }
+          const b = $('#copy');
+          try {
+            await navigator.clipboard.writeText(link);
+            b.textContent = 'Copied ✓'; bump(b); buzz(10);
+            clearTimeout(b._t); b._t = setTimeout(() => { b.textContent = 'Copy'; }, 1600);
+          } catch {   // no clipboard access: select the link (with the usual highlight) so it can be copied by hand
+            const r = document.createRange(); r.selectNodeContents($('#link'));
+            getSelection().removeAllRanges(); getSelection().addRange(r);
+            toast('Press ⌘C to copy');
+          }
         };
         $('#close').onclick = () => act(s, 'end');
         $('#next').onclick = () => act(s, 'next');
@@ -1223,17 +1261,24 @@
       if (!alive) return;
       if (s.phase === 'question') { duration = s.question.time * 1000; deadline = performance.now() + s.remaining; queueMicrotask(startTicker); }
       const key = `play:${s.phase}:${s.qIndex}:${s.choice}`;
-      if (key === viewKey) return;
+      if (key === viewKey) {   // same screen: just keep the lobby head-count fresh
+        const wc = $('#wcount');
+        if (wc && wc.textContent !== waitCount(s.count)) { wc.textContent = waitCount(s.count); bump(wc); }
+        return;
+      }
       viewKey = key;
       const me = `<span class="pill">${esc(s.name)}</span><span class="pill score-pill">${fmt(s.score)}</span>`;
       const centered = (inner) => { app.innerHTML = `<main class="page center">${nav(me)}<div class="solo">${inner}</div></main>`; };
 
       if (s.phase === 'lobby') {
         return centered(`
-          ${s.cover ? `<img class="intro-img" src="${s.cover}" alt="" decoding="async">` : ''}
-          ${buddy(s.name, s.look, 'me new')}
-          <h1 class="display">You’re in, <em>${esc(s.name)}.</em></h1>
-          <p class="lede">Eyes on the host’s screen — the game starts any second<span class="dots"></span></p>`);
+          <div class="waitroom">
+            ${s.cover ? `<img class="intro-img small" src="${s.cover}" alt="" decoding="async">` : ''}
+            <div class="me-stage">${buddy(s.name, s.look, 'me new')}</div>
+            <h1 class="display">You’re in, <em>${esc(s.name)}.</em></h1>
+            ${waitingChip('Waiting for the host to start')}
+            <p class="lede"><span id="wcount">${waitCount(s.count)}</span> · PIN ${pinText(s.pin)}</p>
+          </div>`);
       }
 
       if (s.phase === 'question' && s.choice === null && s.question.type === 'pin') {
@@ -1399,7 +1444,7 @@
             : s.question.type === 'tf' ? `<div class="avatar ${s.choice ? 't0' : 't1'}">${s.choice ? '✕' : '✓'}</div>`
             : `<div class="avatar t${s.choice}">${L[s.choice]}</div>`}
           <h1 class="display">Locked <em>in.</em></h1>
-          <p class="lede">Waiting for everyone else<span class="dots"></span></p>`);
+          ${waitingChip('Waiting for everyone else')}`);
       }
 
       if (s.phase === 'reveal') {
@@ -1451,7 +1496,8 @@
   // One rounded pill per selected line, drawn behind the words. Each pill lives in the
   // surface its line sits on (card, tile, nav, or the page), above that surface's background
   // and below its text. Only does work while something is selected.
-  const SURFACES = '.card, .nav, .tile';
+  // Anything with its own solid background is a surface: the pill goes above that background, under its text.
+  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox';
   const pageLayer = document.createElement('div');
   pageLayer.id = 'hl';
   pageLayer.setAttribute('aria-hidden', 'true');
