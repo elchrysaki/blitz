@@ -225,7 +225,73 @@
       <a class="navlink wide ${location.pathname === '/explore' ? 'on' : ''}" href="/explore" data-link>Explore</a>
       <a class="navlink wide wider ${location.pathname === '/leaderboard' ? 'on' : ''}" href="/leaderboard" data-link>Leaderboard</a>
       <span class="grow"></span>${right}
+      <button class="menu-btn" type="button" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"><i></i><i></i><i></i></button>
     </header>`;
+
+  // ---------- phone menu ----------
+  // On narrow screens the bar's links fold into a ☰ button; it opens a frosted panel under the bar
+  // (the same glass as the pickers), springs out from the button, and closes on a pick, a tap
+  // outside, Escape or any page change.
+  const MENU = [
+    ['/dashboard', 'Dashboard', 'Your quizzes, games and stats'],
+    ['/explore', 'Explore', 'Public quizzes to play or save'],
+    ['/leaderboard', 'Leaderboard', 'Everyone’s ratings'],
+  ];
+  let menu = null;
+  function closeMenu(refocus = false) {
+    if (!menu) return;
+    const { panel, btn, off } = menu;
+    menu = null;
+    off();
+    btn.setAttribute('aria-expanded', 'false');
+    btn.classList.remove('open');
+    panel.classList.add('out');
+    setTimeout(() => panel.remove(), 160);
+    if (refocus) btn.focus({ preventScroll: true });
+  }
+  function openMenu(btn) {
+    closePicker(false);
+    const here = location.pathname;
+    const panel = document.createElement('nav');
+    panel.className = 'menu-pop';
+    panel.setAttribute('aria-label', 'Menu');
+    panel.innerHTML = `
+      ${MENU.map(([href, label, sub]) => `<a class="menu-item ${here === href ? 'on' : ''}" href="${href}" data-link ${here === href ? 'aria-current="page"' : ''}>
+        <span><b>${label}</b><small>${sub}</small></span>${here === href ? '<i aria-hidden="true">●</i>' : CHEV}</a>`).join('')}
+      <div class="menu-actions">
+        <a class="btn primary small" href="/create" data-link>New quiz</a>
+        <a class="btn small" href="/play" data-link>Join a game</a>
+      </div>`;
+    document.body.append(panel);
+    const place = () => {
+      const bar = btn.closest('.nav').getBoundingClientRect();
+      const b = btn.getBoundingClientRect();
+      panel.style.top = `${bar.bottom + 8}px`;
+      panel.style.right = `${Math.max(12, innerWidth - bar.right)}px`;
+      panel.style.transformOrigin = `${panel.offsetWidth - (innerWidth - b.right - Math.max(12, innerWidth - bar.right)) - b.width / 2}px -8px`;
+    };
+    place();
+    btn.setAttribute('aria-expanded', 'true');
+    btn.classList.add('open');
+    buzz(6);
+    const outside = (e) => { if (!panel.contains(e.target) && !btn.contains(e.target)) closeMenu(); };
+    const keys = (e) => { if (e.key === 'Escape') closeMenu(true); };
+    setTimeout(() => document.addEventListener('pointerdown', outside, true));
+    document.addEventListener('keydown', keys);
+    addEventListener('resize', place);
+    menu = { panel, btn, off: () => {
+      document.removeEventListener('pointerdown', outside, true);
+      document.removeEventListener('keydown', keys);
+      removeEventListener('resize', place);
+    } };
+    panel.querySelector('.menu-item')?.focus({ preventScroll: true });
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('.menu-btn');
+    if (!b) return;
+    e.preventDefault();
+    if (menu) closeMenu(); else openMenu(b);
+  });
 
   // Answer tiles. True/False tiles are turquoise ✓ True and vermilion ✕ False instead of A–D.
   const tiles = (answers, each = () => ({}), kind = 'quiz') => `
@@ -355,6 +421,7 @@
   function route() {
     if (stale) { location.reload(); return; }   // a newer version is live: load it for this page
     checkVersion();
+    closeMenu();
     if (cleanup) { cleanup(); cleanup = null; }
     if (typeof closePicker === 'function') closePicker(false);
     viewKey = '';
@@ -1816,7 +1883,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
       const n = quiz.questions.length;
       app.innerHTML = `
         <main class="page preview">
-          ${nav(`<a class="btn small" href="/edit/${id}" data-link>Edit</a><button class="btn primary small" id="open">Open lobby →</button>`)}
+          ${nav(`<a class="btn small" href="/edit/${id}" data-link>Edit</a><button class="btn primary small" id="open">Open<span class="hide-xs"> lobby</span> →</button>`)}
           <section class="create-head">
             <p class="eyebrow">Preview · ${n} question${n === 1 ? '' : 's'}</p>
             <h1 class="display">${esc(quiz.title)}</h1>
@@ -2504,7 +2571,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
   // surface its line sits on (card, tile, nav, or the page), above that surface's background
   // and below its text. Only does work while something is selected.
   // Anything with its own solid background is a surface: the pill goes above that background, under its text.
-  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox, .chart, .rlist li, .slider-stage, .pinstat, .sheet, .imp-list li, .import-cta, .imp-files li, .imp-paste textarea, .ex-search, .ex-types span';
+  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox, .chart, .rlist li, .slider-stage, .pinstat, .sheet, .imp-list li, .import-cta, .imp-files li, .imp-paste textarea, .ex-search, .ex-types span, .menu-pop, .menu-btn';
   const pageLayer = document.createElement('div');
   pageLayer.id = 'hl';
   pageLayer.setAttribute('aria-hidden', 'true');

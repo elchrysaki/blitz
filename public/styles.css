@@ -847,7 +847,7 @@ button.tile:active { transform: scale(.97); }
   .stats { grid-template-columns: minmax(0, 1fr); padding: 18px; }
   .stat-hero { padding: 4px; }
 }
-@media (max-width: 640px) { .nav .navlink.wide { display: none; } }  /* the bar gets crowded: Leaderboard is on the dashboard instead */
+@media (max-width: 640px) { .nav .navlink { display: none; } }  /* phones: every page link lives in the ☰ menu */
 @media (max-width: 480px) {
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat b { font-size: 22px; }
@@ -1125,3 +1125,40 @@ html.sheet-open { overflow: hidden; }
 @media (hover: hover) and (pointer: fine) { .btn.danger:hover { background: #cf3f0e; border-color: #cf3f0e; } }
 .qtile.leaving { transition: opacity .25s ease, transform .25s ease; opacity: 0; transform: scale(.96); }
 @media (prefers-reduced-motion: reduce) { .qtile.leaving { transition: none; } }
+
+/* ---------- phone menu (☰) ---------- */
+.menu-btn { display: none; flex: none; position: relative; width: var(--ctl-sm); height: var(--ctl-sm); margin-left: 8px; border-radius: 50%;
+  background: var(--solid); border: 1.5px solid var(--edge-soft); color: var(--ink); transition: background-color .2s ease, border-color .2s ease, var(--press); }
+.menu-btn i { position: absolute; left: 50%; top: 50%; width: 16px; height: 2px; margin: -1px 0 0 -8px; border-radius: 2px; background: currentColor;
+  transition: transform .45s var(--spring-bouncy, var(--ease)), opacity .2s ease; }
+.menu-btn i:nth-child(1) { transform: translateY(-5px); }
+.menu-btn i:nth-child(3) { transform: translateY(5px); }
+.menu-btn.open { background: var(--solid-hi); border-color: var(--ice); }
+.menu-btn.open i:nth-child(1) { transform: rotate(45deg); }
+.menu-btn.open i:nth-child(2) { opacity: 0; transform: scaleX(.2); }
+.menu-btn.open i:nth-child(3) { transform: rotate(-45deg); }
+.menu-btn:active { transform: scale(.92); }
+@media (max-width: 860px) { .menu-btn { display: inline-block; } }   /* shown whenever a page link is folded away */
+
+.menu-pop { position: fixed; z-index: 55; width: min(320px, calc(100vw - 24px)); padding: 8px; border-radius: 24px; display: grid; gap: 2px;
+  background: rgba(6, 66, 92, .9); -webkit-backdrop-filter: blur(22px) saturate(1.4); backdrop-filter: blur(22px) saturate(1.4);
+  border: 1.5px solid var(--edge); box-shadow: 0 24px 60px rgba(1, 16, 28, .55); animation: pop-in .42s var(--spring-bouncy, var(--ease)) both; }
+.menu-pop.out { animation: fade .15s ease reverse both; }
+.menu-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; color: var(--ink);
+  animation: opt-in .42s var(--spring, var(--ease)) both; transition: background-color .2s ease, var(--press); }
+.menu-item:nth-child(2) { animation-delay: 30ms; } .menu-item:nth-child(3) { animation-delay: 55ms; }
+.menu-item span { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.menu-item b { font-weight: 700; font-size: 17px; }
+.menu-item small { color: var(--mute); font-size: 13px; }
+.menu-item .chev { width: 8px; height: 13px; opacity: .6; }
+.menu-item i { font-style: normal; font-size: 10px; color: var(--accent); }
+.menu-item.on { background: rgba(246, 241, 233, .12); }
+.menu-item:active { transform: scale(.98); }
+.menu-item:focus-visible { outline: 2px solid var(--ice); outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) { .menu-item:hover { background: rgba(246, 241, 233, .1); } }
+.menu-actions { display: flex; gap: 8px; padding: 8px 6px 4px; margin-top: 4px; border-top: 1px solid var(--line); }
+.menu-actions .btn { flex: 1; }
+@media (prefers-reduced-transparency: reduce) { .menu-pop { background: var(--teal-900); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+@media (prefers-reduced-motion: reduce) { .menu-pop, .menu-item, .menu-btn i { animation: none !important; transition: none !important; } }
+.menu-pop, .menu-btn { isolation: isolate; }
+@media (max-width: 360px) { .hide-xs { display: none; } }   /* the smallest phones: shorter button labels in the bar */
