@@ -14,6 +14,14 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 
 **Lobby characters:** every player gets an original big-head character in an old-school 3D, 2000s-diva style, drawn by the app as SVG. Each player gets a random character when they join; the server picks it, so the host and the player see the same one. The host's lobby shows them as a grid that players hop into as they join, and each player sees their own character while waiting.
 
+**Import questions** (editor → "Already have your questions written?"): fills a quiz from questions you already wrote. It only reads what's there (no AI, nothing invented). The reader is `public/import.js`, loaded the first time the sheet opens.
+
+- **Sources:** drop or choose files or a whole folder, or paste text (from a PDF, Google Docs, a website…). Reads Word (.docx), Excel (.xlsx, including Kahoot's quiz template), .csv / .tsv, .txt / .md and .json. Older formats (.doc, .xls, .pages, PDF) need saving as one of those, or copying and pasting.
+- **Text:** numbered questions with lettered, numbered or bulleted answers. Mark the right one with `*`, `✓`, `[x]` or bold, or write `Answer: B` under it, or add an *Answer key* at the end (`1-B, 2-C`). `Time: 30`, `Image: paris.jpg`, `Answer: False` (True / False), `Answer: Canberra | Canberra ACT` (Type answer), `Answer: 330 m` + `Range: 0-500` (Slider), `Order: A > B > C` (Puzzle).
+- **Spreadsheets:** a header row with *Question*, *Answer 1–4*, *Correct answer* and optionally *Time limit*, *Image*, *Type*.
+- **Pictures** from the same folder go to the question they name (`Image: …`) or by number (`1.jpg`, `q2.png`, `03-volcano.webp`). One called `cover` becomes the intro picture.
+- A preview lists every question found, its pictures and anything to check (no right answer marked, too many answers) before you add them. Pin questions are skipped, since their areas are drawn in the editor.
+
 **Host results:** after every question the host sees what everyone replied, not just the right answer. Quiz and True / False questions get a bar chart of how many picked each answer (the right one ticked). Every type gets a "Who answered what" list: each player's character, their reply in words (the answer, the typed text, the number, the order they chose, or the areas they found), and the points it earned, best first.
 
 **Old quizzes, new editor:** opening any quiz or unsaved draft in the editor brings it up to the current format, so every question type and option is there, whatever version the quiz was made with.
@@ -97,4 +105,5 @@ Open http://localhost:3000. Players on the same Wi-Fi join through the network l
 - `wrangler.jsonc`: Cloudflare config (assets, D1, Durable Object, cron)
 - `server.py`: the local backend (the same API, using Python's standard library)
 - `public/app.js`: the whole front end (home, dashboard, editor, host, player)
+- `public/import.js`: reads questions from text, Word, Excel, CSV and JSON for the editor's Import (loaded on demand)
 - `public/styles.css`: styles

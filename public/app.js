@@ -676,6 +676,61 @@
     };
   }
 
+  // ---------- import helpers ----------
+  let importLib = null;
+  const loadImporter = () => importLib || (importLib = new Promise((resolve, reject) => {
+    if (window.BlitzImport) return resolve(window.BlitzImport);
+    const s = document.createElement('script');
+    s.src = '/import.js';
+    s.onload = () => resolve(window.BlitzImport);
+    s.onerror = () => { importLib = null; reject(new Error("Couldn't load the importer — check your connection")); };
+    document.head.append(s);
+  }));
+  // Everything dropped, including whole folders (and the folders inside them).
+  async function filesFromDrop(dt) {
+    const entries = [...(dt.items || [])].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+    if (!entries.length) return [...dt.files];
+    const out = [];
+    const walk = async (en) => {
+      if (en.isFile) { try { out.push(await new Promise((res, rej) => en.file(res, rej))); } catch { /* unreadable: skip */ } }
+      else if (en.isDirectory) {
+        const reader = en.createReader();
+        let batch;
+        do { batch = await new Promise((res, rej) => reader.readEntries(res, rej)); for (const e of batch) await walk(e); } while (batch.length);
+      }
+    };
+    for (const en of entries) await walk(en);
+    return out;
+  }
+  const IMPORT_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 15v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const SAMPLE_TXT = `Title: Sample quiz
+
+1. What is the capital of France?
+a) Berlin
+b) *Paris
+c) Rome
+d) Madrid
+Time: 20
+Image: 1.jpg
+
+2. The Moon has its own light.
+Answer: False
+
+3. What's the capital of Australia?
+Answer: Canberra | Canberra ACT
+
+4. How tall is the Eiffel Tower?
+Answer: 330 m
+Range: 0-500
+
+5. Order the planets from the Sun
+Order: Mercury > Venus > Earth > Mars
+`;
+  const SAMPLE_CSV = `Question,Answer 1,Answer 2,Answer 3,Answer 4,Correct answer,Time limit,Image
+What is the capital of France?,Berlin,Paris,Rome,Madrid,2,20,1.jpg
+Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
+`;
+
   // ---------- create ----------
 
   const blankQuestion = () => ({ type: 'quiz', title: '', image: null, answers: ['', '', '', ''], correct: 0, regions: [], time: 20,
@@ -910,6 +965,10 @@
           <p class="eyebrow">${editId ? 'Editing quiz' : 'New quiz'}</p>
           <input class="title-input" id="title" maxlength="120" placeholder="Name your quiz" value="${esc(d.title)}" aria-label="Quiz title">
           <div id="cover"></div>
+          <button class="import-cta" id="importOpen" type="button">
+            <span class="import-ic" aria-hidden="true">${IMPORT_ICON}</span>
+            <span><b>Already have your questions written?</b><small>Import them from a file, a folder with pictures, or pasted text</small></span>
+            ${CHEV}</button>
         </section>
         <div id="questions"></div>
         <button class="add" id="add"><span>+</span> Add question</button>
@@ -1177,6 +1236,223 @@
       e.preventDefault();
       setImage(qOf(drop), e.dataTransfer.files[0]);
     });
+    $('#importOpen').onclick = () => openImport();
+
+    // ---------- import: questions you already wrote, from files, a folder or pasted text ----------
+    // The reading itself lives in /import.js (loaded the first time you open this); here we gather the
+    // files, match pictures to questions, show what was found, and add it to the quiz.
+    function openImport() {
+      closePicker(false);
+      const urls = [];
+      let files = [], pasted = '', result = null, busy = false, seq = 0;
+      const back = document.createElement('div');
+      back.className = 'sheet-back';
+      back.innerHTML = `
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="imp-h">
+          <header class="sheet-head"><h2 id="imp-h">Import questions</h2><button class="sheet-x" aria-label="Close">✕</button></header>
+          <div class="sheet-body">
+            <label class="imp-drop" id="impDrop">
+              <input type="file" id="impFiles" multiple hidden accept=".txt,.md,.markdown,.csv,.tsv,.json,.xlsx,.docx,image/*">
+              <span class="drop-hint"><b>Drop a file or a whole folder here</b>
+                <small>Word (.docx), Excel (.xlsx), .csv, .txt, .md or .json — plus pictures</small></span>
+            </label>
+            <div class="imp-pick">
+              <button class="btn small" id="impChoose" type="button">Choose files</button>
+              <button class="btn small" id="impFolder" type="button">Choose a folder</button>
+              <input type="file" id="impDir" hidden webkitdirectory directory multiple>
+            </div>
+            <div id="impFileList"></div>
+            <label class="imp-paste"><span class="eyebrow">Or paste them</span>
+              <textarea id="impText" rows="7" spellcheck="false" placeholder="1. What is the capital of France?&#10;a) Berlin&#10;b) *Paris&#10;c) Rome&#10;&#10;2. The Moon has its own light.&#10;Answer: False"></textarea></label>
+            <details class="imp-help"><summary>How to write them</summary>
+              <div class="imp-help-body">
+                <pre>1. What is the capital of France?
+a) Berlin
+b) *Paris          ← mark the right one: *, ✓, [x] or bold
+c) Rome
+Time: 30
+Image: paris.jpg
+
+2. The Moon has its own light.
+Answer: False                  ← True / False
+
+3. What's the capital of Australia?
+Answer: Canberra | Canberra ACT  ← Type answer (| = also accept)
+
+4. How tall is the Eiffel Tower?
+Answer: 330 m
+Range: 0-500                   ← Slider
+
+5. Order the planets from the Sun
+Order: Mercury > Venus > Earth ← Puzzle</pre>
+                <ul>
+                  <li><b>Right answers</b> can also be given as <code>Answer: B</code> under the question, or in an <b>Answer key</b> at the end (<code>1-B, 2-C</code>).</li>
+                  <li><b>Spreadsheets</b> (.xlsx, .csv, or rows pasted from one): a header row with <i>Question</i>, <i>Answer 1–4</i>, <i>Correct answer</i> and optionally <i>Time limit</i> and <i>Image</i>. Kahoot's quiz template works as it is.</li>
+                  <li><b>Word</b>: questions as lines or a numbered list, answers as a sub-list; bold marks the right one.</li>
+                  <li><b>Pictures</b>: put them in the same folder, named <code>1.jpg</code>, <code>2.png</code>… for each question, or name them with <code>Image:</code>. One called <code>cover</code> becomes the intro picture.</li>
+                  <li><b>PDF, Google Docs, a website</b>: copy the text and paste it above.</li>
+                  <li>Pin questions can't be imported: their areas are drawn on the picture in the editor.</li>
+                </ul>
+                <p class="imp-samples">Samples: <a download="blitz-sample.txt" href="data:text/plain;charset=utf-8,${encodeURIComponent(SAMPLE_TXT)}">text</a> · <a download="blitz-sample.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent(SAMPLE_CSV)}">spreadsheet (.csv)</a></p>
+              </div></details>
+            <div id="impOut" aria-live="polite"></div>
+          </div>
+          <footer class="sheet-foot"><span id="impSum" class="imp-sum"></span><button class="btn primary" id="impAdd" disabled>Add questions</button></footer>
+        </div>`;
+      document.body.append(back);
+      document.documentElement.classList.add('sheet-open');
+      const $s = (sel) => back.querySelector(sel);
+      const close = () => {
+        urls.forEach((u) => URL.revokeObjectURL(u));
+        document.documentElement.classList.remove('sheet-open');
+        back.classList.add('out');
+        document.removeEventListener('keydown', esc_);
+        setTimeout(() => back.remove(), 180);
+      };
+      const esc_ = (e) => { if (e.key === 'Escape' && !busy) close(); };
+      document.addEventListener('keydown', esc_);
+      $s('.sheet-x').onclick = () => !busy && close();
+      back.addEventListener('pointerdown', (e) => { if (e.target === back && !busy) close(); });
+      $s('#impChoose').onclick = () => $s('#impFiles').click();
+      $s('#impFolder').onclick = () => $s('#impDir').click();
+      const useless = (f) => /(^|\/)(\.|__MACOSX)/.test(f.webkitRelativePath || f.name) || f.name.startsWith('.');
+      const take = (list) => {
+        const add = [...list].filter((f) => !useless(f));
+        const key = (f) => `${f.webkitRelativePath || f.name}:${f.size}`;
+        const have = new Set(files.map(key));
+        files = [...files, ...add.filter((f) => !have.has(key(f)))];
+        refresh();
+      };
+      $s('#impFiles').onchange = (e) => { take(e.target.files); e.target.value = ''; };
+      $s('#impDir').onchange = (e) => { take(e.target.files); e.target.value = ''; };
+      const drop = $s('#impDrop');
+      back.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+      back.addEventListener('dragleave', (e) => { if (e.target === back || !back.contains(e.relatedTarget)) drop.classList.remove('over'); });
+      back.addEventListener('drop', async (e) => { e.preventDefault(); drop.classList.remove('over'); take(await filesFromDrop(e.dataTransfer)); });
+      let typing = 0;
+      $s('#impText').oninput = (e) => { clearTimeout(typing); typing = setTimeout(() => { pasted = e.target.value; refresh(); }, 250); };
+      $s('#impFileList').onclick = (e) => {
+        const b = e.target.closest('[data-rm]');
+        if (b) { files.splice(+b.dataset.rm, 1); refresh(); }
+      };
+      setTimeout(() => $s('#impText').focus({ preventScroll: true }), 60);
+
+      async function refresh() {
+        const my = ++seq;
+        const lib = await loadImporter().catch((err) => { toast(err.message); return null; });
+        if (!lib || my !== seq) return;
+        const docs = files.filter((f) => lib.QUESTION_FILE.test(f.name)).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, undefined, { numeric: true }));
+        const pics = files.filter((f) => lib.IMAGE_FILE.test(f.name) || (f.type.startsWith('image/') && !lib.QUESTION_FILE.test(f.name)));
+        const other = files.filter((f) => !docs.includes(f) && !pics.includes(f));
+        const errors = other.map((f) => `${f.name}: not a question file or a picture`);
+        let questions = [], skipped = [], title = null;
+        for (const f of docs) {
+          try {
+            const r = await lib.readFile(f);
+            questions.push(...r.questions); skipped.push(...r.skipped);
+            title = title || r.title || f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+          } catch (err) { errors.push(err.message.includes(f.name) ? err.message : `${f.name}: ${err.message}`); }
+        }
+        if (pasted.trim()) {
+          const r = lib.readText(pasted);
+          questions.push(...r.questions); skipped.push(...r.skipped);
+          title = title || r.title;
+        }
+        if (my !== seq) return;
+        // Pictures: by name ("Image: paris.jpg"), else by number (1.jpg, q2.png, 03-volcano.webp); "cover" is the intro.
+        const stem = (n) => n.toLowerCase().replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '');
+        const byStem = new Map(pics.map((f) => [stem(f.name), f]));
+        const byNum = new Map();
+        pics.forEach((f) => { const m = stem(f.name).match(/^(?:q(?:uestion)?[\s._-]*)?0*(\d{1,3})(?:[\s._-].*)?$/); if (m && !byNum.has(+m[1])) byNum.set(+m[1], f); });
+        const cover = pics.find((f) => /^(cover|intro|title|quiz)$/.test(stem(f.name))) || null;
+        const used = new Set();
+        questions = questions.map((q, i) => {
+          let pic = null;
+          const warnings = [...q.warnings];
+          if (q.imageRef) {
+            pic = byStem.get(stem(q.imageRef)) || null;
+            if (!pic) warnings.push(`Picture “${q.imageRef}” wasn't among the files`);
+          } else pic = byNum.get(i + 1) || null;
+          if (pic) used.add(pic);
+          return { ...q, pic, warnings };
+        });
+        const unused = pics.filter((f) => !used.has(f) && f !== cover);
+        result = { questions, skipped, errors, title, cover, unused, docs, pics };
+        render();
+      }
+
+      function thumb(f) { const u = URL.createObjectURL(f); urls.push(u); return u; }
+      function render() {
+        const r = result;
+        // Files as small chips (a folder of pictures stays compact); ✕ removes one.
+        $s('#impFileList').innerHTML = files.length ? `<ul class="imp-files">${files.map((f, i) => `
+          <li class="${BlitzImport.IMAGE_FILE.test(f.name) ? 'pic' : ''}"><span title="${esc(f.webkitRelativePath || f.name)}">${esc(f.name)}</span><button data-rm="${i}" aria-label="Remove ${esc(f.name)}">✕</button></li>`).join('')}</ul>` : '';
+        $s('#impDrop').classList.toggle('slim', files.length > 0);
+        const ansLine = (q) => q.type === 'quiz' ? q.answers.filter(Boolean).map((a, k) => { const ok = k === q.correct && !q.unsure; return `<span class="ia ${ok ? 'ok' : ''}">${ok ? '✓ ' : ''}${esc(a)}</span>`; }).join('')
+          : q.type === 'tf' ? (q.unsure ? '<span class="ia">True</span><span class="ia">False</span>' : `<span class="ia ok">✓ ${q.correct ? 'False' : 'True'}</span>`)
+          : q.type === 'type' ? q.accepted.filter(Boolean).map((a, k) => `<span class="ia ${k ? '' : 'ok'}">${k ? '' : '✓ '}${esc(a)}</span>`).join('')
+          : q.type === 'slider' ? `<span class="ia ok">✓ ${esc(withUnit(q.answer, q.unit))}</span><span class="ia">${esc(withUnit(q.min, q.unit))} – ${esc(withUnit(q.max, q.unit))}</span>`
+          : q.type === 'puzzle' ? q.answers.filter(Boolean).map((a, k) => `<span class="ia">${k + 1}. ${esc(a)}</span>`).join('') : '';
+        $s('#impOut').innerHTML = !r || (!r.questions.length && !r.errors.length && !r.skipped.length) ? (files.length || pasted.trim() ? '<p class="hint">No questions found yet. Check “How to write them”.</p>' : '') : `
+          ${r.errors.map((e) => `<p class="imp-err">${esc(e)}</p>`).join('')}
+          ${r.questions.length ? `<p class="eyebrow imp-found">Found ${r.questions.length} question${r.questions.length === 1 ? '' : 's'}${r.pics.length ? ` · ${r.questions.filter((q) => q.pic).length} with pictures` : ''}${r.cover ? ' · an intro picture' : ''}</p>` : ''}
+          <ol class="imp-list">${r.questions.map((q, i) => `
+            <li class="${q.warnings.length ? 'warn' : ''}">
+              <span class="iq-n">${i + 1}</span>
+              <div class="iq-main">
+                <div class="iq-top"><span class="iq-type">${TYPE_LABEL[q.type]}</span><span class="iq-time">${q.time}s</span></div>
+                <strong>${esc(q.title)}</strong>
+                <div class="iq-ans">${ansLine(q)}</div>
+                ${q.warnings.map((w) => `<p class="iq-warn">${esc(w)}</p>`).join('')}
+              </div>
+              ${q.pic ? `<img class="iq-pic" src="${thumb(q.pic)}" alt="">` : ''}
+            </li>`).join('')}</ol>
+          ${r.skipped.map((q) => `<p class="imp-err">Skipped “${esc(q.title)}”: ${esc(q.reason)}.</p>`).join('')}
+          ${r.unused.length ? `<p class="hint">Not used: ${r.unused.map((f) => esc(f.name)).join(', ')}. Name pictures 1.jpg, 2.jpg… or write <code>Image: name</code> under a question.</p>` : ''}`;
+        const n = r ? r.questions.length : 0;
+        $s('#impAdd').disabled = !n;
+        $s('#impAdd').textContent = n ? `Add ${n} question${n === 1 ? '' : 's'}` : 'Add questions';
+        const warns = r ? r.questions.filter((q) => q.warnings.length).length : 0;
+        $s('#impSum').textContent = warns ? `${warns} to check in the editor` : '';
+      }
+
+      $s('#impAdd').onclick = async () => {
+        const r = result;
+        if (!r || !r.questions.length || busy) return;
+        busy = true;
+        const btn = $s('#impAdd');
+        btn.disabled = true;
+        const picOf = async (f) => { try { return await shrink(f); } catch { return null; } };
+        const made = [];
+        let missing = 0;
+        for (const [i, q] of r.questions.entries()) {
+          btn.textContent = q.pic ? `Adding pictures… ${i + 1}/${r.questions.length}` : btn.textContent;
+          const image = q.pic ? await picOf(q.pic) : null;
+          if (q.pic && !image) missing++;
+          const base = { ...blankQuestion(), type: q.type, title: q.title, time: q.time, image };
+          if (q.type === 'quiz') Object.assign(base, { answers: q.answers, correct: q.correct });
+          if (q.type === 'tf') Object.assign(base, { correct: q.correct });
+          if (q.type === 'type') Object.assign(base, { accepted: q.accepted });
+          if (q.type === 'puzzle') Object.assign(base, { answers: q.answers });
+          if (q.type === 'slider') Object.assign(base, { min: q.min, max: q.max, step: q.step, answer: q.answer, unit: q.unit, margin: q.margin });
+          made.push(base);
+        }
+        // An untouched blank first question is replaced instead of left above the imports.
+        const empty = (q) => !q.title.trim() && !q.image && q.answers.every((a) => !a.trim()) && q.accepted.every((a) => !a.trim());
+        if (d.questions.length === 1 && empty(d.questions[0])) d.questions = [];
+        const first = d.questions.length;
+        d.questions.push(...made);
+        if (!d.title.trim() && r.title) { d.title = r.title.slice(0, 120); $('#title').value = d.title; }
+        if (!d.cover && r.cover) { const c = await picOf(r.cover); if (c) { d.cover = c; drawCover(); } }
+        save(); draw();
+        busy = false;
+        close();
+        toast(`Added ${made.length} question${made.length === 1 ? '' : 's'}${missing ? ` · ${missing} picture${missing === 1 ? '' : 's'} couldn't be read` : ''}`);
+        list.children[first]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+      refresh();
+    }
+
     $('#add').onclick = () => {
       d.questions.push(blankQuestion());
       save(); draw();
@@ -1979,7 +2255,7 @@
   // surface its line sits on (card, tile, nav, or the page), above that surface's background
   // and below its text. Only does work while something is selected.
   // Anything with its own solid background is a surface: the pill goes above that background, under its text.
-  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox, .chart, .rlist li, .slider-stage, .pinstat';
+  const SURFACES = '.card, .nav, .tile, .shot, .linkcard, .chip, .pill, .ppin, .buddy, .standing, .waiting-chip, .set-group, .ans, .pop, .readybox, .lchip, .stat, .otile, .accept, .typed-chip, .typebox, .chart, .rlist li, .slider-stage, .pinstat, .sheet, .imp-list li, .import-cta, .imp-files li, .imp-paste textarea';
   const pageLayer = document.createElement('div');
   pageLayer.id = 'hl';
   pageLayer.setAttribute('aria-hidden', 'true');
