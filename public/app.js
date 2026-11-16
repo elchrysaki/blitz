@@ -240,6 +240,7 @@
 
   function route() {
     if (cleanup) { cleanup(); cleanup = null; }
+    if (typeof closePicker === 'function') closePicker(false);
     viewKey = '';
     window.scrollTo(0, 0);
     const p = location.pathname;
@@ -529,6 +530,98 @@
       : { ...blankQuestion(), title: q.title, image: q.image, answers: [...q.answers, '', '', ''].slice(0, 4), correct: q.correct, time: q.time })),
   });
 
+  // ---------- glass popover picker ----------
+  // Tap a setting and a small frosted panel opens next to it (like Apple's calendar and settings
+  // pickers): a list of choices, a number with − / +, or a short text with suggestions.
+  // It springs out of the control you tapped, closes on Done, Escape or a tap outside.
+  const CHEV = '<svg class="chev" viewBox="0 0 8 13" aria-hidden="true"><path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const UPDOWN = '<svg class="chev" viewBox="0 0 10 14" aria-hidden="true"><path d="M2 5l3-3 3 3M2 9l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  let pop = null;
+  function closePicker(refocus = true) {
+    if (!pop) return;
+    const { el, anchor, off } = pop;
+    pop = null;
+    off();
+    anchor.setAttribute('aria-expanded', 'false');
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 140);
+    if (refocus && document.contains(anchor)) anchor.focus({ preventScroll: true });
+  }
+  function openPicker(anchor, spec) {
+    closePicker(false);
+    const el = document.createElement('div');
+    el.className = 'pop';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', spec.title);
+    const head = `<div class="pop-head"><strong>${esc(spec.title)}</strong>${spec.kind === 'choices' ? '' : '<button class="pop-done">Done</button>'}</div>`;
+    if (spec.kind === 'choices') {
+      el.innerHTML = head + `<div class="pop-list" role="listbox">${spec.options.map(([v, label, sub]) => `
+        <button class="pop-opt ${String(v) === String(spec.value) ? 'on' : ''}" role="option" aria-selected="${String(v) === String(spec.value)}" data-v="${esc(v)}">
+          <span><b>${esc(label)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span><i>✓</i></button>`).join('')}</div>`;
+    } else if (spec.kind === 'number') {
+      el.innerHTML = head + `<div class="pop-num">
+          <button class="pop-step" data-d="-1" aria-label="Lower">−</button>
+          <label><input inputmode="decimal" value="${esc(spec.value)}" aria-label="${esc(spec.title)}">${spec.unit ? `<span>${esc(spec.unit)}</span>` : ''}</label>
+          <button class="pop-step" data-d="1" aria-label="Higher">+</button>
+        </div>${spec.note ? `<p class="pop-note">${esc(spec.note)}</p>` : ''}`;
+    } else {
+      el.innerHTML = head + `<div class="pop-text"><input value="${esc(spec.value)}" maxlength="${spec.max || 12}" placeholder="${esc(spec.placeholder || '')}" aria-label="${esc(spec.title)}"></div>
+        ${spec.suggestions ? `<div class="pop-chips">${spec.suggestions.map((v) => `<button class="pop-chip" data-v="${esc(v)}">${esc(v || 'None')}</button>`).join('')}</div>` : ''}`;
+    }
+    document.body.append(el);
+    // Place it under the control (or above when there's no room), never off-screen. It follows the
+    // control when the page scrolls (phones scroll to make room for the keyboard) instead of closing.
+    let below = null;
+    const place = () => {
+      const a = anchor.getBoundingClientRect();
+      const w = el.offsetWidth, h = el.offsetHeight, vw = innerWidth, vh = innerHeight;
+      const left = Math.min(Math.max(12, a.left + a.width / 2 - w / 2), vw - w - 12);
+      if (below === null) below = a.bottom + 10 + h <= vh - 12 || a.top - 10 - h < 12;
+      const top = below ? a.bottom + 10 : a.top - 10 - h;
+      Object.assign(el.style, { left: `${left}px`, top: `${top}px`, transformOrigin: `${a.left + a.width / 2 - left}px ${below ? 0 : h}px` });
+    };
+    place();
+    anchor.setAttribute('aria-expanded', 'true');
+
+    const input = el.querySelector('input');
+    const num = (v) => { const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+    el.addEventListener('click', (e) => {
+      const opt = e.target.closest('.pop-opt');
+      if (opt) { spec.onChange(opt.dataset.v); buzz(6); return closePicker(); }
+      const chip = e.target.closest('.pop-chip');
+      if (chip) { input.value = chip.dataset.v; spec.onChange(chip.dataset.v); return closePicker(); }
+      const stepBtn = e.target.closest('.pop-step');
+      if (stepBtn) {
+        const v = Math.round(((num(input.value) ?? 0) + stepBtn.dataset.d * (spec.step || 1)) * 1e6) / 1e6;
+        input.value = v; spec.onChange(v); buzz(6); return;
+      }
+      if (e.target.closest('.pop-done')) closePicker();
+    });
+    if (input) {
+      input.addEventListener('input', () => {
+        if (spec.kind === 'number') { const v = num(input.value); if (v !== null) spec.onChange(v); }
+        else spec.onChange(input.value);
+      });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); closePicker(); } });
+    }
+    const outside = (e) => { if (!el.contains(e.target) && !anchor.contains(e.target)) closePicker(false); };
+    const keys = (e) => { if (e.key === 'Escape') closePicker(); };
+    let frame = 0;
+    const follow = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; place(); }); };
+    setTimeout(() => document.addEventListener('pointerdown', outside, true));
+    document.addEventListener('keydown', keys);
+    addEventListener('resize', follow);
+    addEventListener('scroll', follow, { passive: true, capture: true });
+    pop = { el, anchor, off: () => {
+      document.removeEventListener('pointerdown', outside, true);
+      document.removeEventListener('keydown', keys);
+      removeEventListener('resize', follow);
+      removeEventListener('scroll', follow, { capture: true });
+    } };
+    (input || el.querySelector('.pop-opt.on') || el.querySelector('button'))?.focus({ preventScroll: true });
+    if (input && spec.kind === 'number') input.select();
+  }
+
   async function viewCreate(editId) {
     const draftKey = editId ? `blitz:draft:${editId}` : 'blitz:draft';
     let d = store.get(draftKey, localStorage);
@@ -584,10 +677,8 @@
             ${TYPES.map(([t, label]) => `<button data-act="type" data-type="${t}" class="${q.type === t ? 'on' : ''}" aria-pressed="${q.type === t}">${label}</button>`).join('')}
           </div>
           <span class="grow"></span>
-          <label class="select"><span class="select-label">Time</span>
-            <select data-f="time" aria-label="Time to answer">${TIMES.map((t) => `<option value="${t}" ${t === q.time ? 'selected' : ''}>${t}s</option>`).join('')}</select>
-          </label>
-          ${d.questions.length > 1 ? '<button class="ghost" data-act="del" aria-label="Remove question">Remove</button>' : ''}
+          <button class="chip-btn" data-pick="time" aria-haspopup="dialog" aria-expanded="false" aria-label="Time to answer: ${q.time} seconds">
+            <span>Time</span><b class="set-val" data-for="time">${q.time}s</b>${UPDOWN}</button>
         </header>
         <input class="q-input" data-f="title" maxlength="200" placeholder="${{ pin: 'e.g. Tap the ugliest part of this UI', tf: 'e.g. The Moon has its own light', slider: 'e.g. How tall is the Eiffel Tower?' }[q.type] || 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
         ${picture}
@@ -595,18 +686,28 @@
           : regions.length ? `${regions.length} area${regions.length === 1 ? '' : 's'} marked — players get ${regions.length} pin${regions.length === 1 ? '' : 's'} and need one in every area for full points. Drag to add more.`
           : 'Drag on the picture to mark the right area. You can mark several.'}</p>
           ${q.image ? '<button class="ghost" data-act="noimg">Remove picture</button>' : ''}</div>` : q.type === 'tf' ? `
-        <div class="tf-edit" role="group" aria-label="The right answer">
-          ${['True', 'False'].map((label, k) => `<button class="tf-pick ${k ? 'is-false' : 'is-true'} ${q.correct === k ? 'on' : ''}" data-act="tf" data-v="${k}" aria-pressed="${q.correct === k}">
-            <b>${k ? '✕' : '✓'}</b>${label}${q.correct === k ? '<em>Right answer</em>' : ''}</button>`).join('')}
+        <div class="answers-edit">
+          ${['True', 'False'].map((label, k) => `
+            <div class="ans ${k ? 't0' : 't1'}">
+              <b>${k ? '✕' : '✓'}</b>
+              <span class="ans-fixed">${label}</span>
+              <label class="pick" title="Mark as correct">
+                <input type="radio" name="correct-${i}" data-f="correct" value="${k}" ${q.correct === k ? 'checked' : ''}><i>✓</i>
+              </label>
+            </div>`).join('')}
         </div>
-        <p class="hint">Tap the right answer.</p>` : q.type === 'slider' ? `
-        <div class="slider-edit">
-          <label><span>From</span><input type="number" inputmode="decimal" data-f="min" value="${q.min}"></label>
-          <label><span>To</span><input type="number" inputmode="decimal" data-f="max" value="${q.max}"></label>
-          <label class="sl-answer"><span>Right answer</span><input type="number" inputmode="decimal" data-f="target" value="${q.answer}"></label>
-          <label><span>Unit</span><input data-f="unit" maxlength="12" placeholder="e.g. m, %, years" value="${esc(q.unit)}"></label>
-          <label class="select"><span>Steps of</span><select data-f="step">${STEPS.map((v) => `<option value="${v}" ${v === q.step ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-          <label class="select"><span>Close enough</span><select data-f="margin">${MARGIN_LABELS.map(([v, l]) => `<option value="${v}" ${v === q.margin ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <p class="hint">Tap ✓ on the correct answer.</p>` : q.type === 'slider' ? `
+        <div class="settings">
+          <div class="set-group" role="group" aria-label="Range and answer">
+            ${setRow('min', 'From', withUnit(q.min, q.unit))}
+            ${setRow('max', 'To', withUnit(q.max, q.unit))}
+            ${setRow('answer', 'Right answer', withUnit(q.answer, q.unit), 'accent')}
+          </div>
+          <div class="set-group" role="group" aria-label="Details">
+            ${setRow('unit', 'Unit', q.unit || 'None')}
+            ${setRow('step', 'Steps of', numFmt(q.step))}
+            ${setRow('margin', 'Close enough', marginText(q.margin))}
+          </div>
         </div>
         <div class="sl-preview">${sliderPreview(q)}</div>
         <p class="hint">Players drag a slider to their guess. Spot on scores full points; inside the shaded band, the closer the better.</p>` : `
@@ -621,15 +722,33 @@
             </div>`).join('')}
         </div>
         <p class="hint">Tap ✓ on the correct answer.</p>`}
+        ${d.questions.length > 1 ? '<div class="qfoot"><button class="ghost" data-act="del">Remove question</button></div>' : ''}
       </section>`;
     };
+    // One row in a settings list: label on the left, value and › on the right; tapping opens a picker.
+    function setRow(field, label, value, cls = '') {
+      return `<button class="set-row ${cls}" data-pick="${field}" aria-haspopup="dialog" aria-expanded="false">
+        <span>${label}</span><b class="set-val" data-for="${field}">${esc(value)}</b>${CHEV}</button>`;
+    }
+    function marginText(m) { return m === 'exact' ? 'Exact only' : MARGIN_LABELS.find(([v]) => v === m)?.[1] || '±10%'; }
+    // Refresh the values shown on one card without redrawing it (the open picker stays anchored).
+    function paintCard(i) {
+      const q = d.questions[i];
+      const card = list.querySelector(`[data-q="${i}"]`);
+      if (!card) return;
+      const show = { time: `${q.time}s`, min: withUnit(q.min, q.unit), max: withUnit(q.max, q.unit), answer: withUnit(q.answer, q.unit),
+        unit: q.unit || 'None', step: numFmt(q.step), margin: marginText(q.margin) };
+      card.querySelectorAll('.set-val').forEach((el) => { el.textContent = show[el.dataset.for]; });
+      const prev = card.querySelector('.sl-preview');
+      if (prev) prev.innerHTML = sliderPreview(q);
+    }
     function sliderPreview(q) {
       const ok = [q.min, q.max, q.answer].every((v) => Number.isFinite(+v)) && +q.min < +q.max && +q.answer >= +q.min && +q.answer <= +q.max;
       if (!ok) return '<p class="hint warn">Set a range with the right answer inside it.</p>';
       const sq = { min: +q.min, max: +q.max, unit: q.unit };
       return numberLine(sq, { answer: +q.answer, tolerance: MARGIN_SHARE[q.margin] * (sq.max - sq.min) });
     }
-    const draw = () => { list.innerHTML = d.questions.map(card).join(''); };
+    const draw = () => { closePicker(false); list.innerHTML = d.questions.map(card).join(''); };
     draw();
 
     // The intro picture: shown in the lobby while players join, and on the dashboard tile.
@@ -671,19 +790,35 @@
       const q = qOf(e.target);
       if (f === 'title') q.title = e.target.value;
       else if (f === 'answer') q.answers[+e.target.dataset.k] = e.target.value;
-      else if (f === 'time') q.time = +e.target.value;
-      else if (['min', 'max', 'target', 'step'].includes(f)) q[f === 'target' ? 'answer' : f] = e.target.value === '' ? '' : +e.target.value;
-      else if (f === 'unit' || f === 'margin') q[f] = e.target.value;
       else if (f === 'correct') q.correct = +e.target.value;
-      if (['min', 'max', 'target', 'unit', 'margin', 'step'].includes(f)) {  // refresh just this card's number line
-        e.target.closest('.qcard').querySelector('.sl-preview').innerHTML = sliderPreview(q);
-      }
       save();
     });
     list.addEventListener('change', (e) => {
       if (e.target.type === 'file') setImage(qOf(e.target), e.target.files[0]);
     });
     list.addEventListener('click', (e) => {
+      const pickBtn = e.target.closest('[data-pick]');
+      if (pickBtn) {
+        e.preventDefault();
+        const i = +pickBtn.closest('[data-q]').dataset.q;
+        const q = d.questions[i];
+        const field = pickBtn.dataset.pick;
+        const set = (v) => { q[field] = v; save(); paintCard(i); };
+        const specs = {
+          time: { title: 'Time to answer', kind: 'choices', value: q.time, options: TIMES.map((t) => [t, `${t} seconds`]), onChange: (v) => set(+v) },
+          min: { title: 'From', kind: 'number', value: q.min, step: q.step, unit: q.unit, note: 'The lowest value on the slider.', onChange: (v) => set(v) },
+          max: { title: 'To', kind: 'number', value: q.max, step: q.step, unit: q.unit, note: 'The highest value on the slider.', onChange: (v) => set(v) },
+          answer: { title: 'Right answer', kind: 'number', value: q.answer, step: q.step, unit: q.unit, note: 'Must be between From and To.', onChange: (v) => set(v) },
+          unit: { title: 'Unit', kind: 'text', value: q.unit, placeholder: 'e.g. m, %, years', suggestions: ['', 'm', 'km', '%', 'years', 'kg', '°C', '€'], onChange: (v) => set(v.trim()) },
+          step: { title: 'Steps of', kind: 'choices', value: q.step, options: STEPS.map((v) => [v, numFmt(v)]), onChange: (v) => set(+v) },
+          margin: { title: 'Close enough', kind: 'choices', value: q.margin, onChange: (v) => set(v), options: [
+            ['exact', 'Exact only', 'Only the exact value scores'],
+            ['low', '±5% of the range', 'Very close guesses score too'],
+            ['medium', '±10% of the range', 'Close guesses score too'],
+            ['high', '±20% of the range', 'Rough guesses score too']] },
+        };
+        return openPicker(pickBtn, specs[field]);
+      }
       const t = e.target.closest('[data-act]');
       if (!t) return;
       e.preventDefault();
@@ -693,7 +828,6 @@
       if (act === 'del') d.questions.splice(i, 1);
       if (act === 'noimg') { q.image = null; q.regions = []; }
       if (act === 'type') { q.type = t.dataset.type; if (q.type === 'tf' && q.correct > 1) q.correct = 0; }
-      if (act === 'tf') q.correct = +t.dataset.v;
       if (act === 'rdel') q.regions.splice(+t.dataset.r, 1);
       save(); draw();
     });
