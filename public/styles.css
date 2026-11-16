@@ -1084,3 +1084,8 @@ html.sheet-open { overflow: hidden; }
 }
 @media (prefers-reduced-motion: reduce) { .sheet, .sheet-back, .imp-list li { animation: none !important; } }
 .sheet, .imp-list li, .import-cta, .imp-files li { isolation: isolate; position: relative; }
+/* dashboard: "Import a quiz" sits beside "New quiz" */
+.newtile.imptile { text-align: center; padding: 18px; }
+.newtile.imptile .import-ic { font-size: 0; width: 46px; height: 46px; border-radius: 15px; margin-bottom: 4px; color: var(--wall); }
+.newtile.imptile small { display: block; color: var(--mute); font-size: 13px; font-weight: 500; max-width: 22ch; }
+.qtile-more { display: inline-flex; gap: 2px; margin-left: auto; }   /* Download + Delete stay together, at the end */

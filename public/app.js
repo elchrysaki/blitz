@@ -404,7 +404,7 @@
           <div class="qtile-actions">
             <a class="btn primary small" href="/host/${q.id}" data-link>${q.live ? 'Back to game' : 'Host'}</a>
             <a class="btn small" href="/edit/${q.id}" data-link>Edit</a>
-            <button class="ghost" data-del="${q.id}">Delete</button>
+            <span class="qtile-more"><button class="ghost" data-dl="${q.id}">Download</button><button class="ghost" data-del="${q.id}">Delete</button></span>
           </div>
         </div>
       </article>`;
@@ -543,6 +543,7 @@
           <div class="qgrid">
             ${me.quizzes.map(quizCard).join('')}
             <a class="card qtile newtile" href="/create" data-link><span>+</span>New quiz</a>
+            <a class="card qtile newtile imptile" href="/create?import=1" data-link><span class="import-ic">${IMPORT_ICON}</span>Import a quiz<small>From a downloaded quiz, Word, Excel or text</small></a>
           </div>
         </section>
         <section class="dash-sec">
@@ -553,6 +554,7 @@
         </section>
       </main>`;
 
+    app.querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadQuiz(b.dataset.dl, b); });
     app.querySelectorAll('[data-del]').forEach((b) => {
       b.onclick = async () => {
         const card = b.closest('.qtile');
@@ -701,6 +703,25 @@
     };
     for (const en of entries) await walk(en);
     return out;
+  }
+  // Download a quiz as a .zip: quiz.json (everything, Pin areas included), a readable quiz.txt and its
+  // pictures. Import turns that file (or the unzipped folder) back into the same quiz, in any browser.
+  const slug = (t) => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase().slice(0, 60);
+  async function downloadQuiz(id, btn) {
+    const label = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = 'Preparing…';
+    try {
+      const [lib, quiz] = await Promise.all([loadImporter(), api(`/api/quizzes/${id}`)]);
+      const blob = await lib.exportQuiz(quiz);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${slug(quiz.title) || 'quiz'}.zip`;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      toast('Downloaded — import the .zip to make this quiz again');
+    } catch (err) { toast(err.message || "Couldn't download the quiz"); }
+    finally { btn.disabled = false; btn.innerHTML = label; }
   }
   const IMPORT_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 15v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const SAMPLE_TXT = `Title: Sample quiz
@@ -1237,6 +1258,10 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       setImage(qOf(drop), e.dataTransfer.files[0]);
     });
     $('#importOpen').onclick = () => openImport();
+    if (!editId && new URLSearchParams(location.search).has('import')) {   // "Import a quiz" from the dashboard
+      history.replaceState(null, '', '/create');
+      setTimeout(() => openImport(), 50);
+    }
 
     // ---------- import: questions you already wrote, from files, a folder or pasted text ----------
     // The reading itself lives in /import.js (loaded the first time you open this); here we gather the
@@ -1245,6 +1270,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       closePicker(false);
       const urls = [];
       let files = [], pasted = '', result = null, busy = false, seq = 0;
+      const zipCache = new WeakMap();
       const back = document.createElement('div');
       back.className = 'sheet-back';
       back.innerHTML = `
@@ -1252,9 +1278,9 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
           <header class="sheet-head"><h2 id="imp-h">Import questions</h2><button class="sheet-x" aria-label="Close">✕</button></header>
           <div class="sheet-body">
             <label class="imp-drop" id="impDrop">
-              <input type="file" id="impFiles" multiple hidden accept=".txt,.md,.markdown,.csv,.tsv,.json,.xlsx,.docx,image/*">
+              <input type="file" id="impFiles" multiple hidden accept=".zip,.txt,.md,.markdown,.csv,.tsv,.json,.xlsx,.docx,image/*">
               <span class="drop-hint"><b>Drop a file or a whole folder here</b>
-                <small>Word (.docx), Excel (.xlsx), .csv, .txt, .md or .json — plus pictures</small></span>
+                <small>A downloaded Blitz quiz (.zip), Word (.docx), Excel (.xlsx), .csv, .txt, .md or .json — plus pictures</small></span>
             </label>
             <div class="imp-pick">
               <button class="btn small" id="impChoose" type="button">Choose files</button>
@@ -1341,17 +1367,31 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
         const my = ++seq;
         const lib = await loadImporter().catch((err) => { toast(err.message); return null; });
         if (!lib || my !== seq) return;
-        const docs = files.filter((f) => lib.QUESTION_FILE.test(f.name)).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, undefined, { numeric: true }));
-        const pics = files.filter((f) => lib.IMAGE_FILE.test(f.name) || (f.type.startsWith('image/') && !lib.QUESTION_FILE.test(f.name)));
-        const other = files.filter((f) => !docs.includes(f) && !pics.includes(f));
-        const errors = other.map((f) => `${f.name}: not a question file or a picture`);
-        let questions = [], skipped = [], title = null;
-        for (const f of docs) {
-          try {
-            const r = await lib.readFile(f);
-            questions.push(...r.questions); skipped.push(...r.skipped);
-            title = title || r.title || f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
-          } catch (err) { errors.push(err.message.includes(f.name) ? err.message : `${f.name}: ${err.message}`); }
+        // A .zip (like a downloaded quiz) is opened and read like a dropped folder.
+        const errors = [];
+        const all = [];
+        for (const f of files) {
+          if (!/\.zip$/i.test(f.name)) { all.push(f); continue; }
+          if (!zipCache.has(f)) zipCache.set(f, lib.filesFromZip(f).catch((err) => { errors.push(`${f.name}: ${err.message}`); return []; }));
+          all.push(...await zipCache.get(f));
+        }
+        if (my !== seq) return;
+        const docs0 = all.filter((f) => lib.QUESTION_FILE.test(f.name)).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, undefined, { numeric: true }));
+        const pics = all.filter((f) => lib.IMAGE_FILE.test(f.name) || (f.type.startsWith('image/') && !lib.QUESTION_FILE.test(f.name)));
+        const other = all.filter((f) => !docs0.includes(f) && !pics.includes(f));
+        errors.push(...other.map((f) => `${f.name}: not a question file or a picture`));
+        let questions = [], skipped = [], title = null, coverRef = null;
+        const read = [];
+        for (const f of docs0) {
+          try { read.push([f, await lib.readFile(f)]); }
+          catch (err) { errors.push(err.message.includes(f.name) ? err.message : `${f.name}: ${err.message}`); }
+        }
+        // A downloaded Blitz quiz carries a readable quiz.txt copy too: use its quiz.json only.
+        const docs = read.some(([, r]) => r.blitz) ? read.filter(([, r]) => r.blitz) : read;
+        for (const [f, r] of docs) {
+          questions.push(...r.questions); skipped.push(...r.skipped);
+          title = title || r.title || f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+          coverRef = coverRef || r.coverRef || null;
         }
         if (pasted.trim()) {
           const r = lib.readText(pasted);
@@ -1364,7 +1404,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
         const byStem = new Map(pics.map((f) => [stem(f.name), f]));
         const byNum = new Map();
         pics.forEach((f) => { const m = stem(f.name).match(/^(?:q(?:uestion)?[\s._-]*)?0*(\d{1,3})(?:[\s._-].*)?$/); if (m && !byNum.has(+m[1])) byNum.set(+m[1], f); });
-        const cover = pics.find((f) => /^(cover|intro|title|quiz)$/.test(stem(f.name))) || null;
+        const cover = (coverRef && byStem.get(stem(coverRef))) || pics.find((f) => /^(cover|intro|title|quiz)$/.test(stem(f.name))) || null;
         const used = new Set();
         questions = questions.map((q, i) => {
           let pic = null;
@@ -1377,7 +1417,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           return { ...q, pic, warnings };
         });
         const unused = pics.filter((f) => !used.has(f) && f !== cover);
-        result = { questions, skipped, errors, title, cover, unused, docs, pics };
+        result = { questions, skipped, errors, title, cover, unused, docs: docs.map(([f]) => f), pics };
         render();
       }
 
@@ -1392,7 +1432,8 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           : q.type === 'tf' ? (q.unsure ? '<span class="ia">True</span><span class="ia">False</span>' : `<span class="ia ok">✓ ${q.correct ? 'False' : 'True'}</span>`)
           : q.type === 'type' ? q.accepted.filter(Boolean).map((a, k) => `<span class="ia ${k ? '' : 'ok'}">${k ? '' : '✓ '}${esc(a)}</span>`).join('')
           : q.type === 'slider' ? `<span class="ia ok">✓ ${esc(withUnit(q.answer, q.unit))}</span><span class="ia">${esc(withUnit(q.min, q.unit))} – ${esc(withUnit(q.max, q.unit))}</span>`
-          : q.type === 'puzzle' ? q.answers.filter(Boolean).map((a, k) => `<span class="ia">${k + 1}. ${esc(a)}</span>`).join('') : '';
+          : q.type === 'puzzle' ? q.answers.filter(Boolean).map((a, k) => `<span class="ia">${k + 1}. ${esc(a)}</span>`).join('')
+          : q.type === 'pin' ? `<span class="ia ok">${q.regions.length} area${q.regions.length === 1 ? '' : 's'}</span>${q.penalty ? `<span class="ia">Stray pins −${fmt(q.penalty)}</span>` : ''}` : '';
         $s('#impOut').innerHTML = !r || (!r.questions.length && !r.errors.length && !r.skipped.length) ? (files.length || pasted.trim() ? '<p class="hint">No questions found yet. Check “How to write them”.</p>' : '') : `
           ${r.errors.map((e) => `<p class="imp-err">${esc(e)}</p>`).join('')}
           ${r.questions.length ? `<p class="eyebrow imp-found">Found ${r.questions.length} question${r.questions.length === 1 ? '' : 's'}${r.pics.length ? ` · ${r.questions.filter((q) => q.pic).length} with pictures` : ''}${r.cover ? ' · an intro picture' : ''}</p>` : ''}
@@ -1435,6 +1476,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           if (q.type === 'type') Object.assign(base, { accepted: q.accepted });
           if (q.type === 'puzzle') Object.assign(base, { answers: q.answers });
           if (q.type === 'slider') Object.assign(base, { min: q.min, max: q.max, step: q.step, answer: q.answer, unit: q.unit, margin: q.margin });
+          if (q.type === 'pin') Object.assign(base, { regions: q.regions, penalty: q.penalty || 0 });
           made.push(base);
         }
         // An untouched blank first question is replaced instead of left above the imports.
@@ -1611,9 +1653,10 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
                 : `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
                    ${tiles(q.answers, (k) => (k === q.correct ? { cls: 'right', extra: '<em>✓ Correct</em>' } : { cls: 'soft' }), q.type)}`}
             </section>`).join('')}
-          <div class="cta end"><button class="btn primary" id="open2">Open lobby →</button></div>
+          <div class="cta end"><button class="btn" id="dlQuiz">Download quiz</button><button class="btn primary" id="open2">Open lobby →</button></div>
         </main>`;
       $('#open').onclick = $('#open2').onclick = $('#open3').onclick = openLobby;
+      $('#dlQuiz').onclick = () => downloadQuiz(id, $('#dlQuiz'));
     }
 
     function renderHost(s, session) {

@@ -163,7 +163,7 @@
   }
 
   // ---------- zip files (.xlsx, .docx) ----------
-  async function unzip(buf, want) {
+  async function unzip(buf, want, asBytes = false) {
     const v = new DataView(buf);
     const u8 = new Uint8Array(buf);
     let eocd = -1;
@@ -183,10 +183,10 @@
       if (!want(name)) continue;
       const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
       const data = u8.subarray(start, start + size);
-      if (method === 0) out[name] = dec.decode(data);
+      if (method === 0) out[name] = asBytes ? data.slice() : dec.decode(data);
       else if (method === 8) {
         const s = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-        out[name] = await new Response(s).text();
+        out[name] = asBytes ? new Uint8Array(await new Response(s).arrayBuffer()) : await new Response(s).text();
       }
     }
     return out;
@@ -253,8 +253,29 @@
   }
 
   // ---------- JSON (Blitz's own shape and common quiz shapes) ----------
+  // A quiz downloaded from Blitz: everything comes back exactly as it was, Pin questions included.
+  const pad4 = (a) => [...(Array.isArray(a) ? a.map((x) => String(x ?? '')) : []), '', '', '', ''].slice(0, 4);
+  function fromBlitz(j) {
+    const questions = (j.questions || []).map((o) => {
+      const type = ['quiz', 'tf', 'type', 'puzzle', 'slider', 'pin'].includes(o.type) ? o.type : 'quiz';
+      const q = { type, title: clean(o.title).slice(0, 200), time: TIMES.includes(o.time) ? o.time : 20, imageRef: o.image || null, warnings: [] };
+      if (type === 'quiz') Object.assign(q, { answers: pad4(o.answers), correct: Number.isInteger(o.correct) ? o.correct : 0 });
+      if (type === 'tf') q.correct = o.correct ? 1 : 0;
+      if (type === 'type') q.accepted = pad4(o.accepted);
+      if (type === 'puzzle') q.answers = pad4(o.answers);
+      if (type === 'slider') Object.assign(q, { min: +o.min, max: +o.max, step: +o.step || 1, answer: +o.answer, unit: clean(o.unit).slice(0, 12), margin: o.margin || 'medium' });
+      if (type === 'pin') {
+        Object.assign(q, { regions: Array.isArray(o.regions) ? o.regions : [], penalty: [0, 100, 250, 500].includes(o.penalty) ? o.penalty : 0 });
+        if (!o.image) q.warnings.push('A Pin question needs its picture');
+      }
+      return q;
+    }).filter((q) => q.title);
+    return { title: clean(j.title) || null, coverRef: j.cover || null, questions, skipped: [], blitz: true };
+  }
+
   function parseJson(text) {
     const j = JSON.parse(text);
+    if (j && j.format === 'blitz-quiz') return { blitzQuiz: j };
     const list = Array.isArray(j) ? j : j.questions || j.items || j.quiz?.questions || [];
     const raw = list.map((o) => {
       if (typeof o !== 'object' || !o) return null;
@@ -371,6 +392,7 @@
   }
 
   function build(parsed) {
+    if (parsed.blitzQuiz) return fromBlitz(parsed.blitzQuiz);
     const out = [], skipped = [];
     // A lone first line with no answers, followed by real questions, is the quiz's title.
     const [first, ...rest] = parsed.raw;
@@ -409,5 +431,93 @@
   const QUESTION_FILE = /\.(txt|md|markdown|text|csv|tsv|json|xlsx|docx)$/i;
   const IMAGE_FILE = /\.(jpe?g|png|gif|webp|avif|heic|heif|bmp)$/i;
 
-  window.BlitzImport = { readFile, readText, QUESTION_FILE, IMAGE_FILE, _parseText: parseText, _finish: finish };
+  // A .zip (e.g. a downloaded quiz) → its files, ready to read like a dropped folder.
+  const MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', json: 'application/json', txt: 'text/plain', csv: 'text/csv' };
+  async function filesFromZip(file) {
+    const parts = await unzip(await file.arrayBuffer(), (n) => !n.endsWith('/') && !/(^|\/)(__MACOSX|\.)/.test(n), true);
+    return Object.entries(parts).map(([name, bytes]) => new File([bytes], name.split('/').pop(), { type: MIME[name.split('.').pop().toLowerCase()] || '' }));
+  }
+
+  // ---------- download a quiz: a .zip that Import turns back into the same quiz ----------
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = (u8) => { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  function makeZip(entries) {   // files stored as they are (pictures are already compressed)
+    const enc = new TextEncoder();
+    const d = new Date();
+    const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    const parts = [], central = [];
+    let offset = 0;
+    for (const e of entries) {
+      const name = enc.encode(e.name);
+      const data = typeof e.data === 'string' ? enc.encode(e.data) : e.data;
+      const crc = crc32(data);
+      const h = new DataView(new ArrayBuffer(30));
+      [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [8, 0, 2], [10, time, 2], [12, date, 2], [14, crc, 4], [18, data.length, 4], [22, data.length, 4], [26, name.length, 2], [28, 0, 2]]
+        .forEach(([at, v, n]) => (n === 4 ? h.setUint32(at, v, true) : h.setUint16(at, v, true)));
+      parts.push(h, name, data);
+      const c = new DataView(new ArrayBuffer(46));
+      [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [10, 0, 2], [12, time, 2], [14, date, 2], [16, crc, 4], [20, data.length, 4], [24, data.length, 4], [28, name.length, 2], [42, offset, 4]]
+        .forEach(([at, v, n]) => (n === 4 ? c.setUint32(at, v, true) : c.setUint16(at, v, true)));
+      central.push(c, name);
+      offset += 30 + name.length + data.length;
+    }
+    const size = central.reduce((n, p) => n + p.byteLength, 0);
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+    end.setUint32(12, size, true); end.setUint32(16, offset, true);
+    return new Blob([...parts, ...central, end], { type: 'application/zip' });
+  }
+  const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
+  const MARGIN_TXT = { exact: 'exact', low: '±5%', medium: '±10%', high: '±20%' };
+  // The same quiz as text in the format Import reads, so it can be read, edited anywhere, and imported again.
+  function toText(j) {
+    const out = [`Title: ${j.title}`, ''];
+    j.questions.forEach((q, i) => {
+      out.push(`${i + 1}. ${q.title}`);
+      if (q.type === 'quiz') q.answers.forEach((a, k) => out.push(`${'abcd'[k]}) ${k === q.correct ? '*' : ''}${a}`));
+      if (q.type === 'tf') out.push(`Answer: ${q.correct ? 'False' : 'True'}`);
+      if (q.type === 'type') out.push(`Answer: ${q.accepted.join(' | ')}`);
+      if (q.type === 'puzzle') out.push(`Order: ${q.answers.join(' > ')}`);
+      if (q.type === 'slider') out.push(`Answer: ${q.answer}${q.unit ? ` ${q.unit}` : ''}`, `Range: ${q.min}-${q.max}`, `Step: ${q.step}`, `Margin: ${MARGIN_TXT[q.margin] || '±10%'}`);
+      if (q.type === 'pin') out.push('Type: pin   (its areas are kept in quiz.json)');
+      out.push(`Time: ${q.time}`);
+      if (q.image) out.push(`Image: ${q.image}`);
+      out.push('');
+    });
+    return out.join('\n');
+  }
+  // quiz = what /api/quizzes/:id returns (pictures as URLs). Pictures go in pictures/ (1.jpg… and cover).
+  async function exportQuiz(quiz) {
+    const pics = [];
+    const grab = async (url, base) => {
+      if (!url) return null;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const name = `pictures/${base}.${EXT[(res.headers.get('content-type') || '').split(';')[0]] || 'jpg'}`;
+      pics.push({ name, data: new Uint8Array(await res.arrayBuffer()) });
+      return name;
+    };
+    const cover = await grab(quiz.cover, 'cover');
+    const questions = [];
+    for (const [i, q] of quiz.questions.entries()) {
+      const type = q.type || 'quiz';
+      const o = { type, title: q.title, time: q.time, image: await grab(q.image, String(i + 1)) };
+      if (type === 'quiz') Object.assign(o, { answers: q.answers, correct: q.correct });
+      if (type === 'tf') o.correct = q.correct;
+      if (type === 'type') o.accepted = q.accepted;
+      if (type === 'puzzle') o.answers = q.answers;
+      if (type === 'slider') Object.assign(o, { min: q.min, max: q.max, step: q.step, answer: q.answer, unit: q.unit || '', margin: q.margin });
+      if (type === 'pin') Object.assign(o, { regions: q.regions, penalty: q.penalty || 0 });
+      questions.push(o);
+    }
+    const json = { format: 'blitz-quiz', version: 1, title: quiz.title, exported: new Date().toISOString(), cover, questions };
+    return makeZip([
+      { name: 'quiz.json', data: JSON.stringify(json, null, 2) },
+      { name: 'quiz.txt', data: toText(json) },
+      ...pics,
+    ]);
+  }
+
+  window.BlitzImport = { readFile, readText, filesFromZip, exportQuiz, QUESTION_FILE, IMAGE_FILE, _parseText: parseText, _finish: finish };
 })();

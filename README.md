@@ -14,6 +14,8 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 
 **Lobby characters:** every player gets an original big-head character in an old-school 3D, 2000s-diva style, drawn by the app as SVG. Each player gets a random character when they join; the server picks it, so the host and the player see the same one. The host's lobby shows them as a grid that players hop into as they join, and each player sees their own character while waiting.
 
+**Download a quiz** (dashboard → *Download*, or *Download quiz* on the host preview): saves one `.zip` with `quiz.json` (the whole quiz, every type and setting, Pin areas included), a readable `quiz.txt` in the import format, and a `pictures/` folder (`1.jpg`… per question, `cover.jpg`). Import that `.zip`, or the folder after unzipping it, and you get the same quiz back, in any browser; this is how you share a quiz or move it to another device. (`quiz.txt` is ignored when `quiz.json` is there, so nothing is doubled.) The dashboard's *Import a quiz* tile opens the importer directly.
+
 **Import questions** (editor → "Already have your questions written?"): fills a quiz from questions you already wrote. It only reads what's there (no AI, nothing invented). The reader is `public/import.js`, loaded the first time the sheet opens.
 
 - **Sources:** drop or choose files or a whole folder, or paste text (from a PDF, Google Docs, a website…). Reads Word (.docx), Excel (.xlsx, including Kahoot's quiz template), .csv / .tsv, .txt / .md and .json. Older formats (.doc, .xls, .pages, PDF) need saving as one of those, or copying and pasting.
