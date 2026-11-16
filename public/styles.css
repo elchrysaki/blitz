@@ -50,7 +50,7 @@
 @font-face { font-family: "DM Sans"; src: url(/fonts/dm-sans.woff2) format("woff2"); font-weight: 400 700; font-style: normal; font-display: swap; }
 
 * { box-sizing: border-box; margin: 0; }
-html { -webkit-text-size-adjust: 100%; background: var(--bg); }
+html { -webkit-text-size-adjust: 100%; background: var(--bg); overscroll-behavior-y: none; }  /* no rubber-band past the top or bottom */
 body {
   background: transparent;  /* the root paints the color; the denim layer sits between them */
   color: var(--ink);
@@ -104,6 +104,11 @@ input::selection, textarea::selection { background: var(--accent); color: var(--
   background-size: cover; background-position: center;
 }
 .aurora i { display: none; }
+/* The wallpaper never moves or re-scales: it is sized to the tallest the screen can get (phones grow when
+   the address bar slides away) plus a margin above and below, so neither scrolling, the toolbar
+   collapsing nor an edge bounce can shift it or show its edges. */
+.aurora { inset: auto; left: 0; right: 0; top: -15vh; height: 130vh; }
+@supports (height: 1lvh) { .aurora { top: -15lvh; height: 130lvh; } }
 
 /* ---------- layout ---------- */
 .page { width: min(1120px, 100%); margin: 0 auto; padding: 0 24px 96px; animation: enter .3s var(--ease) both; }
@@ -984,3 +989,8 @@ button.tile:active { transform: scale(.97); }
   background: var(--solid); border: 1.5px solid var(--edge-soft); }
 .stage .slider-stage .pinstat { background: none; border: 0; padding: 0; }
 .stage .bar .pill { background: var(--solid); border: 1.5px solid var(--edge-soft); color: var(--ink); }
+.gain.neg, .r-pts.neg { color: var(--vermilion-hi) !important; }
+.lede-note { display: inline-block; margin-top: 6px; font-size: 15px; color: var(--mute); }
+/* hints under a player's question sit on a solid backing so they read on any part of the denim */
+.player .qmain > .hint { margin: 0; padding: 10px 16px; border-radius: 16px; max-width: 560px; color: var(--ink);
+  background: var(--solid); border: 1.5px solid var(--edge-soft); }

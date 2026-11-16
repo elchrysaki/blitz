@@ -77,7 +77,8 @@ def clean_quiz(body, quiz_id=None, old=None):
             if not image:
                 raise ValueError(f"Question {n} needs a picture to pin on")
             questions.append({"type": "pin", "title": qtitle, "image": image,
-                              "regions": clean_regions(q.get("regions"), n), "time": limit})
+                              "regions": clean_regions(q.get("regions"), n), "time": limit,
+                              "penalty": q.get("penalty") if q.get("penalty") in PENALTIES and not isinstance(q.get("penalty"), bool) else 0})
             continue
         if q.get("type") == "tf":
             if q.get("correct") not in (0, 1) or isinstance(q.get("correct"), bool):
@@ -214,6 +215,16 @@ def pins_of(choice):
     if not choice:
         return []
     return [choice] if isinstance(choice[0], (int, float)) else choice
+
+
+INVALID = object()      # "not a valid reply"
+PENALTIES = (0, 100, 250, 500)  # what a stray pin may cost, chosen per pin question
+
+
+def stray_pins(q, choice):
+    """Pins outside every area. A pin counts for every area it sits in, so one pin where two areas
+    overlap finds both; more pins in an area already found add nothing."""
+    return sum(not any(in_region(r, pt) for r in q["regions"]) for pt in pins_of(choice))
 
 
 def areas_found(q, choice):
@@ -456,6 +467,7 @@ class Game:
         self.q, self.phase, self.started = i, "question", time.time()
         for p in self.players.values():
             p["choice"], p["ms"], p["gained"], p["right"], p["found"] = None, 0, 0, False, 0
+            p["draft"], p["auto"], p["stray"] = None, False, 0
         self.timer = threading.Timer(self.quiz["questions"][i]["time"] + 0.4, self.timeout, [i])
         self.timer.daemon = True
         self.timer.start()
@@ -466,68 +478,96 @@ class Game:
             if self.phase == "question" and self.q == i:
                 self.reveal()
 
-    def answer(self, p, choice):
-        if self.phase != "question" or p["choice"] is not None:
-            return
-        q = self.quiz["questions"][self.q]
+    def clean_choice(self, q, choice):
+        """Check a reply against the question: returns it cleaned up, or INVALID."""
         if is_pin(q):
             # One pin ({x, y}) or several ([{x, y}, ...]), at most one per target area.
             items = choice if isinstance(choice, list) else [choice]
             if not items or len(items) > len(q["regions"]):
-                return
+                return INVALID
             pts = []
             for c in items:
                 try:
                     x, y = float(c["x"]), float(c["y"])
                 except (TypeError, KeyError, ValueError):
-                    return
+                    return INVALID
                 if not (0 <= x <= 1 and 0 <= y <= 1):
-                    return
+                    return INVALID
                 pts.append([round(x, 4), round(y, 4)])
-            choice = pts
-        elif q.get("type") == "slider":
+            return pts
+        if q.get("type") == "slider":
             if isinstance(choice, bool) or not isinstance(choice, (int, float)) or not math.isfinite(choice) \
                     or not q["min"] <= choice <= q["max"]:
-                return
-            choice = snap(choice, q)
-        elif q.get("type") == "type":
+                return INVALID
+            return snap(choice, q)
+        if q.get("type") == "type":
             if not isinstance(choice, str):
-                return
+                return INVALID
             choice = " ".join(choice.split())[:TYPE_MAX]
-            if not choice:
-                return
-        elif q.get("type") == "puzzle":
+            return choice or INVALID
+        if q.get("type") == "puzzle":
             n = len(q["answers"])
             if not isinstance(choice, list) or len(choice) != n or len(set(map(str, choice))) != n \
                     or not all(isinstance(d, int) and not isinstance(d, bool) and 0 <= d < n for d in choice):
-                return
-        elif isinstance(choice, bool) or not isinstance(choice, int) or not 0 <= choice < len(q["answers"]):
+                return INVALID
+            return choice
+        if isinstance(choice, bool) or not isinstance(choice, int) or not 0 <= choice < len(q["answers"]):
+            return INVALID
+        return choice
+
+    def answer(self, p, raw):
+        if self.phase != "question" or p["choice"] is not None:
             return
-        p["choice"], p["ms"] = choice, (time.time() - self.started) * 1000
+        choice = self.clean_choice(self.quiz["questions"][self.q], raw)
+        if choice is INVALID:
+            return
+        p["choice"], p["ms"], p["draft"] = choice, (time.time() - self.started) * 1000, None
         if all(x["choice"] is not None for x in self.players.values()):
             self.reveal()
         else:
             self.push()
+
+    def draft(self, p, raw):
+        """Pins placed or an order set but not locked in yet. When time runs out it counts as the answer
+        (at the slowest speed); locking in earlier earns the speed bonus. An empty draft clears it."""
+        if self.phase != "question" or p["choice"] is not None:
+            return
+        q = self.quiz["questions"][self.q]
+        if not is_pin(q) and q.get("type") != "puzzle":
+            return
+        if isinstance(raw, list) and not raw:
+            p["draft"] = None
+            return
+        choice = self.clean_choice(q, raw)
+        if choice is not INVALID:
+            p["draft"] = choice
 
     def reveal(self):
         if self.timer:
             self.timer.cancel()
         q = self.with_perm(self.quiz["questions"][self.q])
         for p in self.players.values():
+            if p["choice"] is None and p.get("draft"):   # didn't lock in: the draft counts, at the slowest speed
+                p["choice"], p["ms"], p["auto"] = p["draft"], q["time"] * 1000, True
+            p["draft"] = None
             p["right"] = is_right(q, p["choice"])
             # Pin questions give credit for each area found; quiz questions are all or nothing.
             if is_pin(q):
                 p["found"] = 0 if p["choice"] is None else areas_found(q, p["choice"])
+                p["stray"] = stray_pins(q, p["choice"])
                 share = p["found"] / len(q["regions"])
             elif q.get("type") == "slider":
                 share = slider_share(q, p["choice"])
             else:
                 share = 1 if p["right"] else 0
-            if share > 0:
-                # Right answers earn 500-1000: the faster, the closer to 1000. Partly right pins earn their share of that.
-                frac = min(1.0, p["ms"] / (q["time"] * 1000))
-                p["gained"] = round(1000 * (1 - frac / 2) * share)
-                p["score"] += p["gained"]
+            # Right answers earn 500-1000: the faster, the closer to 1000. Partly right pins earn their share of that.
+            frac = min(1.0, p["ms"] / (q["time"] * 1000))
+            p["gained"] = round(1000 * (1 - frac / 2) * share) if share > 0 else 0
+            # The host can make stray pins cost points (never taking a total below zero).
+            if is_pin(q) and q.get("penalty") and p.get("stray"):
+                p["gained"] -= q["penalty"] * p["stray"]
+            p["gained"] = max(p["gained"], -p["score"])
+            p["score"] += p["gained"]
         self.phase = "reveal"
         self.push()
 
@@ -573,6 +613,7 @@ class Game:
                "image": image_url(self.quiz_id, self.quiz, self.q)}
         if is_pin(q):
             out["maxPins"] = len(q["regions"])  # how many pins a player may drop (one per area)
+            out["penalty"] = q.get("penalty", 0)
         if q.get("type") == "slider":
             out.update({k: q[k] for k in ("min", "max", "step", "unit")})
         return out
@@ -623,12 +664,14 @@ class Game:
                     # Who answered what (every type): the host can show each player's reply, best first.
                     s["replies"] = sorted(
                         ({"name": p["name"], "look": p.get("look"), "choice": p["choice"], "ok": p["right"],
-                          "gained": p["gained"], "found": p.get("found", 0)} for p in self.players.values()),
+                          "gained": p["gained"], "found": p.get("found", 0), "stray": p.get("stray", 0),
+                          "auto": bool(p.get("auto"))} for p in self.players.values()),
                         key=lambda r: (-r["gained"], r["choice"] is None, r["name"].lower()))
         else:
             p = self.players[pid]
             s.update(role="player", name=p["name"], look=p.get("look"), score=p["score"], gained=p["gained"],
                      choice=p["choice"], right=p["right"], found=p.get("found", 0),
+                     stray=p.get("stray", 0), auto=bool(p.get("auto")), draft=p.get("draft"),
                      rank=[r["id"] for r in board].index(pid) + 1)
         return s
 
@@ -978,11 +1021,11 @@ class Handler(BaseHTTPRequestHandler):
         if not g:
             return self.fail(404, "That game has ended")
         action = body.get("action")
-        if action == "answer":
+        if action in ("answer", "draft"):
             p = g.players.get(body.get("player"))
             if not p:
                 return self.fail(403, "You're not in this game")
-            g.answer(p, body.get("choice"))
+            (g.answer if action == "answer" else g.draft)(p, body.get("choice"))
         elif action in ("next", "end"):
             if body.get("token") != g.token:
                 return self.fail(403, "Only the host can do that")

@@ -5,6 +5,7 @@
   const L = 'ABCD';
   const TIMES = [10, 20, 30, 60];
   const fmt = (n) => Number(n).toLocaleString('en-US');
+  const signed = (n) => (n < 0 ? `−${fmt(-n)}` : `+${fmt(n)}`);   // points won or lost this question
   const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
   const pinText = (pin) => `${pin.slice(0, 3)} ${pin.slice(3)}`;
   const clamp = (v) => Math.min(1, Math.max(0, v));
@@ -250,7 +251,7 @@
 
   const boardRows = (players, limit) => players.slice(0, limit).map((p, i) => `
     <li><span class="rank">${i + 1}</span><span class="name">${esc(p.name)}</span>
-      ${p.gained ? `<span class="gain">+${fmt(p.gained)}</span>` : ''}<span class="score">${fmt(p.score)}</span></li>`).join('');
+      ${p.gained ? `<span class="gain ${p.gained < 0 ? 'neg' : ''}">${signed(p.gained)}</span>` : ''}<span class="score">${fmt(p.score)}</span></li>`).join('');
 
   // ---------- host results ----------
   // Kahoot-style bars: how many picked each answer, the right one ticked.
@@ -273,8 +274,12 @@
       case 'tf': return c ? 'False' : 'True';
       case 'type': return `“${c}”`;
       case 'slider': return withUnit(c, q.unit);
-      case 'pin': { const n = s.regions.length; return n > 1 ? `Found ${r.found} of ${n} areas` : r.found ? 'Pin inside the area' : 'Pin outside the area'; }
-      case 'puzzle': return c.map((d) => q.answers[d]).join(' → ');
+      case 'pin': {
+        const n = s.regions.length;
+        const found = n > 1 ? `Found ${r.found} of ${n} areas` : r.found ? 'Pin inside the area' : 'Pin outside the area';
+        return `${found}${r.stray && (n > 1 || r.found) ? ` · ${r.stray} stray` : ''}${r.auto ? ' · not locked in' : ''}`;
+      }
+      case 'puzzle': return `${c.map((d) => q.answers[d]).join(' → ')}${r.auto ? ' · not locked in' : ''}`;
       default: return `${L[c]} · ${q.answers[c]}`;
     }
   }
@@ -284,10 +289,10 @@
         <span class="replies-sum"><b>${s.replies.filter((r) => r.ok).length}</b> right · <b>${s.replies.filter((r) => r.choice !== null && !r.ok).length}</b> wrong${
           s.replies.some((r) => r.choice === null) ? ` · <b>${s.replies.filter((r) => r.choice === null).length}</b> no answer` : ''}</span></div>
       <ul class="rlist">${s.replies.map((r, k) => `
-        <li class="${r.ok ? 'ok' : r.gained ? 'half' : r.choice === null ? 'none' : 'bad'}" style="--i:${Math.min(k, 12)}">
+        <li class="${r.ok ? 'ok' : r.gained > 0 ? 'half' : r.choice === null ? 'none' : 'bad'}" style="--i:${Math.min(k, 12)}">
           <span class="r-art">${avatar(r.look || r.name)}</span>
           <span class="r-main"><strong>${esc(r.name)}</strong><small>${esc(replyText(q, r, s))}</small></span>
-          <span class="r-pts">${r.gained ? `+${fmt(r.gained)}` : r.choice === null ? '–' : '0'}</span>
+          <span class="r-pts ${r.gained < 0 ? 'neg' : ''}">${r.gained ? signed(r.gained) : r.choice === null ? '–' : '0'}</span>
         </li>`).join('')}</ul>
     </section>`;
 
@@ -674,7 +679,10 @@
   // ---------- create ----------
 
   const blankQuestion = () => ({ type: 'quiz', title: '', image: null, answers: ['', '', '', ''], correct: 0, regions: [], time: 20,
-    min: 0, max: 100, step: 1, answer: 50, unit: '', margin: 'medium', accepted: ['', '', '', ''] });
+    min: 0, max: 100, step: 1, answer: 50, unit: '', margin: 'medium', accepted: ['', '', '', ''], penalty: 0 });
+  const PENALTY_OPTS = [[0, 'Free', 'Pins outside the areas cost nothing'], [100, '−100 each', 'A small cost for guessing'],
+    [250, '−250 each', 'Guessing costs points'], [500, '−500 each', 'Only pin when you’re sure']];
+  const penaltyText = (n) => (n ? `−${fmt(n)} each` : 'Free');
   // Question types, with the one-line explanation shown in the type picker.
   const TYPES = [
     ['quiz', 'Quiz', 'Pick the right answer from 2–4'],
@@ -742,6 +750,7 @@
         if (!TIMES.includes(u.time)) u.time = 20;
         if (!Number.isInteger(u.correct) || u.correct < 0 || u.correct > 3) u.correct = 0;
         if (!MARGIN_SHARE.hasOwnProperty(u.margin)) u.margin = 'medium';
+        if (!PENALTY_OPTS.some(([v]) => v === u.penalty)) u.penalty = 0;
         return u;
       }),
     };
@@ -753,7 +762,7 @@
     title: quiz.title,
     cover: quiz.cover || null,
     questions: quiz.questions.map((q) => (q.type === 'pin'
-      ? { ...blankQuestion(), type: 'pin', title: q.title, image: q.image, regions: q.regions, time: q.time }
+      ? { ...blankQuestion(), type: 'pin', title: q.title, image: q.image, regions: q.regions, time: q.time, penalty: q.penalty || 0 }
       : q.type === 'tf' ? { ...blankQuestion(), type: 'tf', title: q.title, image: q.image, correct: q.correct, time: q.time }
       : q.type === 'slider' ? { ...blankQuestion(), type: 'slider', title: q.title, image: q.image, time: q.time,
         min: q.min, max: q.max, step: q.step, answer: q.answer, unit: q.unit || '', margin: q.margin }
@@ -934,7 +943,11 @@
         ${pin ? `<div class="pinrow"><p class="hint">${!q.image ? 'Add a picture, then drag on it to mark the right area.'
           : regions.length ? `${regions.length} area${regions.length === 1 ? '' : 's'} marked — players get ${regions.length} pin${regions.length === 1 ? '' : 's'} and need one in every area for full points. Drag to add more.`
           : 'Drag on the picture to mark the right area. You can mark several.'}</p>
-          ${q.image ? '<button class="ghost" data-act="noimg">Remove picture</button>' : ''}</div>` : q.type === 'tf' ? `
+          ${q.image ? '<button class="ghost" data-act="noimg">Remove picture</button>' : ''}</div>
+        <div class="settings"><div class="set-group" role="group" aria-label="Scoring">
+          ${setRow('penalty', 'Stray pins', penaltyText(q.penalty))}
+        </div></div>
+        <p class="hint">Pins placed when time runs out count too; locking in early earns more. A pin counts once per area, and a pin where two areas overlap finds both.</p>` : q.type === 'tf' ? `
         <div class="answers-edit">
           ${['True', 'False'].map((label, k) => `
             <div class="ans ${k ? 't0' : 't1'}">
@@ -1001,7 +1014,7 @@
       const q = d.questions[i];
       const card = list.querySelector(`[data-q="${i}"]`);
       if (!card) return;
-      const show = { time: `${q.time}s`, qtype: TYPE_LABEL[q.type], min: withUnit(q.min, q.unit), max: withUnit(q.max, q.unit), answer: withUnit(q.answer, q.unit),
+      const show = { time: `${q.time}s`, qtype: TYPE_LABEL[q.type], penalty: penaltyText(q.penalty), min: withUnit(q.min, q.unit), max: withUnit(q.max, q.unit), answer: withUnit(q.answer, q.unit),
         unit: q.unit || 'None', step: numFmt(q.step), margin: marginText(q.margin) };
       card.querySelectorAll('.set-val').forEach((el) => {
         if (el.textContent !== show[el.dataset.for]) { el.textContent = show[el.dataset.for]; bump(el); }
@@ -1094,6 +1107,7 @@
           max: { title: 'To', kind: 'number', value: q.max, step: q.step, unit: q.unit, note: 'The highest value on the slider.', onChange: (v) => set(v) },
           answer: { title: 'Right answer', kind: 'number', value: q.answer, step: q.step, unit: q.unit, note: 'Must be between From and To.', onChange: (v) => set(v) },
           unit: { title: 'Unit', kind: 'text', value: q.unit, placeholder: 'e.g. m, %, years', suggestions: ['', 'm', 'km', '%', 'years', 'kg', '°C', '€'], onChange: (v) => set(v.trim()) },
+          penalty: { title: 'Stray pins', kind: 'choices', value: q.penalty, options: PENALTY_OPTS, onChange: (v) => set(+v) },
           step: { title: 'Steps of', kind: 'choices', value: q.step, options: STEPS.map((v) => [v, numFmt(v)]), onChange: (v) => set(+v) },
           margin: { title: 'Close enough', kind: 'choices', value: q.margin, onChange: (v) => set(v), options: [
             ['exact', 'Exact only', 'Only the exact value scores'],
@@ -1179,7 +1193,7 @@
         if (q.type === 'pin') {
           if (!q.image) return toast(`Question ${n} needs a picture to pin on`);
           if (!q.regions?.length) return toast(`Question ${n}: drag on the picture to mark the right area`);
-          payload.questions.push({ type: 'pin', title: q.title.trim(), image: q.image, regions: q.regions, time: q.time });
+          payload.questions.push({ type: 'pin', title: q.title.trim(), image: q.image, regions: q.regions, time: q.time, penalty: q.penalty || 0 });
           continue;
         }
         if (q.type === 'tf') {
@@ -1305,7 +1319,7 @@
               ${q.type === 'pin'
                 ? `${pinBox(q.image, q.regions.map((r) => regionEl(r)).join(''))}<p class="hint">${q.regions.length > 1
                   ? `Players drop up to ${q.regions.length} pins. A pin in every area scores full points; each area found earns its share.`
-                  : 'Pins inside the highlighted area score.'}</p>`
+                  : 'Pins inside the highlighted area score.'}${q.penalty ? ` Pins outside cost ${fmt(q.penalty)} points each.` : ''}</p>`
                 : q.type === 'slider'
                 ? `${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
                    ${numberLine(q, { answer: q.answer, tolerance: MARGIN_SHARE[q.margin] * (q.max - q.min) })}
@@ -1579,15 +1593,22 @@
           </main>`;
         // Drop up to one pin per target area; tap a pin to pick it back up.
         const max = q.maxPins || 1;
-        const picks = [];
+        // Pins are saved as you go (a draft): when time runs out they count even if you never lock in.
+        const picks = Array.isArray(s.draft) ? s.draft.map(([x, y]) => ({ x, y })) : [];
+        let draftT = 0;
+        const saveDraft = () => {
+          clearTimeout(draftT);
+          draftT = setTimeout(() => api('/api/act', { pin: session.pin, player: session.player, action: 'draft', choice: picks }).catch(() => {}), 250);
+        };
         const box = $('.pinbox');
         const update = () => {
           box.querySelectorAll('.marker').forEach((m) => m.remove());
           picks.forEach((p, i) => box.insertAdjacentHTML('beforeend', marker(p.x, p.y, `${i === picks.length - 1 ? 'drop-in' : ''}`)));
           const left = max - picks.length;
-          $('#pinhint').textContent = !picks.length
+          $('#pinhint').textContent = (!picks.length
             ? (max > 1 ? `Find ${max} spots: tap to drop up to ${max} pins, one in each` : 'Tap the picture to drop your pin')
-            : left ? `${left} pin${left === 1 ? '' : 's'} left · tap a pin to remove it` : 'All pins placed · tap a pin to move it';
+            : `${left ? `${left} pin${left === 1 ? '' : 's'} left · tap a pin to remove it` : 'All pins placed · tap a pin to move it'}. They count when time’s up; lock in now for more points.`)
+            + (q.penalty ? ` Pins outside the areas cost ${fmt(q.penalty)} points each.` : '');
           $('#lock').disabled = !picks.length;
           $('#lock').textContent = picks.length > 1 ? `Lock in ${picks.length} pins →` : 'Lock in pin →';
         };
@@ -1603,10 +1624,12 @@
           else return toast(`That's all ${max} pins — tap one to move it`);
           buzz(8);
           update();
+          saveDraft();
         };
         update();
         $('#lock').onclick = () => {
           if (!picks.length) return;
+          clearTimeout(draftT);
           $('#lock').disabled = true;
           box.classList.add('locked');
           buzz(12);
@@ -1733,7 +1756,9 @@
 
       if (s.phase === 'question' && s.choice === null && s.question.type === 'puzzle') {
         const q = s.question;
-        let order = q.answers.map((_, i) => i);   // shown indices, top to bottom
+        // Shown indices, top to bottom. The order is saved as you go (a draft): when time runs out it
+        // counts even if you never lock in. Coming back (a reload) restores it.
+        let order = Array.isArray(s.draft) && s.draft.length === q.answers.length ? [...s.draft] : q.answers.map((_, i) => i);
         app.innerHTML = `
           <main class="page stage player puzzleq">
             ${playerHead(q)}
@@ -1741,7 +1766,7 @@
               <h1 class="qtitle">${esc(q.title)}</h1>
               ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
               <ol class="order sortable" id="sort" aria-label="Drag the items into the right order"></ol>
-              <p class="hint">Drag to reorder, top to bottom.</p>
+              <p class="hint">Drag to reorder, top to bottom. Your order counts when time’s up; lock in now for more points.</p>
             </div></section>
             <div class="lockbar"><button class="btn primary" id="lock">Lock in →</button></div>
           </main>`;
@@ -1760,6 +1785,7 @@
           paint(focus ? to : undefined);
           box.children[to]?.classList.add('settle');
           buzz(8);
+          api('/api/act', { pin: session.pin, player: session.player, action: 'draft', choice: order }).catch(() => {});
         };
         box.addEventListener('keydown', (e) => {
           const li = e.target.closest('li');
@@ -1876,11 +1902,16 @@
           : pin ? (s.choice === null ? `Here’s where the right area${areas > 1 ? 's were' : ' was'}.`
             : partial ? `You found ${s.found} of ${areas} areas.` : `Your pin${pinsOf(s.choice).length > 1 ? 's' : ''} missed the area${areas > 1 ? 's' : ''}.`)
           : `The answer was <strong>${esc(s.question.answers[s.correct])}</strong>.`;
+        // Pins or an order left on screen when time ran out still counted; stray pins may have cost points.
+        const extra = [
+          s.auto ? 'Time ran out, so what you had placed counted.' : '',
+          pin && s.stray && s.question.penalty ? `${s.stray} stray pin${s.stray > 1 ? 's' : ''} cost ${fmt(s.stray * s.question.penalty)} points.` : '',
+        ].filter(Boolean).join(' ');
         buzz(right ? [14, 60, 14] : 40);
         return centered(`
           <div class="verdict ${right ? 'good' : partial ? 'half' : 'bad'}">${right ? '✓' : partial ? '½' : '✕'}</div>
-          <h1 class="display">${right || partial ? `+${fmt(s.gained)}` : s.choice === null ? 'Time’s <em>up.</em>' : 'Not <em>quite.</em>'}</h1>
-          <p class="lede">${why}</p>
+          <h1 class="display">${s.gained ? signed(s.gained) : s.choice === null ? 'Time’s <em>up.</em>' : 'Not <em>quite.</em>'}</h1>
+          <p class="lede">${why}${extra ? `<br><small class="lede-note">${extra}</small>` : ''}</p>
           ${pin ? pinBox(s.question.image, s.regions.map((r) => regionEl(r)).join('')
             + pinsOf(s.choice).map((pt) => marker(pt[0], pt[1], `drop-in ${s.regions.some((r) => inRegion(r, pt)) ? 'ok' : 'miss'}`)).join(''), 'result') : ''}
           ${slider ? numberLine(s.question, { answer: s.correct, tolerance: s.tolerance, you: s.choice }) : ''}

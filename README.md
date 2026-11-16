@@ -9,7 +9,8 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 - **Type answer:** a title, an optional picture, the right answer and up to 3 other spellings to accept. Players type their answer (up to 40 characters). Capitals, accents, punctuation and extra spaces don't matter, and one typo is forgiven in answers of 6+ letters without digits. The host's reveal shows what players typed, grouped, with counts.
 - **Puzzle:** a title, an optional picture and 2–4 items written in the right order. Every player sees the same shuffle (never already in order) and drags the items into place. Only the exact order scores. The reveal shows the right order; each item keeps the colour and letter it had while shuffled.
 - **Slider:** a title, an optional picture, a range (from / to), the right value, an optional unit, the step size, and how close counts (exact, ±5%, ±10% or ±20% of the range). Players drag to their guess. A spot-on guess scores full points; inside the margin, the closer the better (from full down to half at the edge); outside it, nothing. The reveal shows every guess on a number line.
-- **Pin:** a title and a picture. Drag on the picture to mark one or more target areas. Players drop map-style pins, up to one per area (tap a pin to remove it). A pin in every area scores full points; each area found earns its share, so finding 2 of 3 areas earns two thirds.
+- **Pin:** a title and a picture. Drag on the picture to mark one or more target areas. Players drop map-style pins, up to one per area (tap a pin to remove it). A pin in every area scores full points; each area found earns its share, so finding 2 of 3 areas earns two thirds. An area counts once however many pins are in it, and one pin where two areas overlap finds both. The host can make **stray pins** (outside every area) cost 100, 250 or 500 points each (off by default; a total never drops below zero).
+- **Pins and puzzle orders count without locking in.** What a player has placed is saved as they go; when time runs out it counts, scored as the slowest answer. Locking in earlier earns the speed bonus.
 
 **Lobby characters:** every player gets an original big-head character in an old-school 3D, 2000s-diva style, drawn by the app as SVG. Each player gets a random character when they join; the server picks it, so the host and the player see the same one. The host's lobby shows them as a grid that players hop into as they join, and each player sees their own character while waiting.
 
@@ -51,6 +52,8 @@ npm install && npx wrangler deploy
 ```
 
 ## Look
+
+The denim wallpaper never moves: it's a fixed layer sized to the tallest the screen can get (phones grow when the address bar hides) with a margin above and below, and the page doesn't rubber-band past its top or bottom.
 
 The colors and fonts are fixed. Use the tokens in `public/styles.css` (`:root`) and don't add new colors or fonts.
 

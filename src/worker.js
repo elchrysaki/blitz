@@ -66,7 +66,7 @@ function cleanQuiz(body, quizId = null, old = null) {
     const time = TIMES.includes(q.time) ? q.time : 20;
     if (q.type === "pin") {
       if (!image) throw new UserError(`Question ${n} needs a picture to pin on`);
-      questions.push({ type: "pin", title: qtitle, regions: cleanRegions(q.regions, n), time, image: true });
+      questions.push({ type: "pin", title: qtitle, regions: cleanRegions(q.regions, n), penalty: PENALTIES.includes(q.penalty) ? q.penalty : 0, time, image: true });
       images.push(image);
       return;
     }
@@ -225,6 +225,10 @@ const isPin = (q) => q.type === "pin";
 // pin in it counts as found; finding every area is a full right answer.
 const inRegion = (r, [x, y]) => r.x <= x && x <= r.x + r.w && r.y <= y && y <= r.y + r.h;
 const pinsOf = (choice) => (Array.isArray(choice) && typeof choice[0] === "number" ? [choice] : choice || []);
+// A pin counts for every area it sits in (so one pin where two areas overlap finds both); more pins in an
+// area it already found add nothing. Pins outside every area are "stray".
+const strayPins = (q, choice) => pinsOf(choice).filter((pt) => !q.regions.some((r) => inRegion(r, pt))).length;
+const PENALTIES = [0, 100, 250, 500];
 const areasFound = (q, choice) => q.regions.filter((r) => pinsOf(choice).some((pt) => inRegion(r, pt))).length;
 
 function isRight(q, choice) {
@@ -688,10 +692,10 @@ export class GameRoom extends DurableObject {
   async act(body) {
     const s = this.s;
     if (!s) return { status: 404, body: { error: "That game has ended" } };
-    if (body.action === "answer") {
+    if (body.action === "answer" || body.action === "draft") {
       const pid = text(body.player);
       if (!Object.hasOwn(s.players, pid)) return { status: 403, body: { error: "You're not in this game" } };
-      await this.answer(s.players[pid], body.choice);
+      await (body.action === "answer" ? this.answer(s.players[pid], body.choice) : this.draft(s.players[pid], body.choice));
     } else if (body.action === "next" || body.action === "end") {
       if (body.token !== s.token) return { status: 403, body: { error: "Only the host can do that" } };
       await (body.action === "next" ? this.advance() : this.end(s.gid));
@@ -723,41 +727,60 @@ export class GameRoom extends DurableObject {
   async ask(i) {
     const s = this.s;
     Object.assign(s, { q: i, phase: "question", started: Date.now() });
-    for (const p of Object.values(s.players)) Object.assign(p, { choice: null, ms: 0, gained: 0, right: false, found: 0 });
+    for (const p of Object.values(s.players)) Object.assign(p, { choice: null, draft: null, auto: false, ms: 0, gained: 0, right: false, found: 0, stray: 0 });
     this.push();
     await this.persist();
   }
 
-  async answer(p, choice) {
-    const s = this.s;
-    if (s.phase !== "question" || p.choice !== null) return;
-    const q = s.quiz.questions[s.q];
+  // Check a reply against the current question; returns it cleaned up, or undefined if it isn't valid.
+  cleanChoice(q, choice) {
     if (isPin(q)) {
       // One pin ({x, y}) or several ([{x, y}, …]), at most one per target area.
       const list = Array.isArray(choice) ? choice : [choice];
       const ok = (c) => c && typeof c === "object" && typeof c.x === "number" && typeof c.y === "number" &&
         c.x >= 0 && c.x <= 1 && c.y >= 0 && c.y <= 1;
       if (!list.length || list.length > q.regions.length || !list.every(ok)) return;
-      choice = list.map((c) => [round4(c.x), round4(c.y)]);
+      return list.map((c) => [round4(c.x), round4(c.y)]);
     } else if (q.type === "slider") {
       if (typeof choice !== "number" || !Number.isFinite(choice) || choice < q.min || choice > q.max) return;
-      choice = snap(choice, q);
+      return snap(choice, q);
     } else if (q.type === "type") {
       if (typeof choice !== "string") return;
       choice = choice.replace(/\s+/g, " ").trim().slice(0, TYPE_MAX);
-      if (!choice) return;
+      return choice || undefined;
     } else if (q.type === "puzzle") {
       // The order the player put the shown items in: each shown index exactly once.
       const n = q.answers.length;
       if (!Array.isArray(choice) || choice.length !== n || new Set(choice).size !== n ||
         !choice.every((d) => Number.isInteger(d) && d >= 0 && d < n)) return;
+      return choice;
     } else if (!Number.isInteger(choice) || choice < 0 || choice >= q.answers.length) {
       return;
     }
+    return choice;
+  }
+
+  async answer(p, raw) {
+    const s = this.s;
+    if (s.phase !== "question" || p.choice !== null) return;
+    const choice = this.cleanChoice(s.quiz.questions[s.q], raw);
+    if (choice === undefined) return;
     p.choice = choice;
     p.ms = Date.now() - s.started;
+    p.draft = null;
     if (Object.values(s.players).every((x) => x.choice !== null)) return this.reveal();
     this.push();
+    await this.persist();
+  }
+
+  // Pins placed or an order set but not locked in yet. When time runs out it counts as the answer
+  // (at the slowest speed); locking in earlier is what earns the speed bonus. An empty draft clears it.
+  async draft(p, raw) {
+    const s = this.s;
+    if (s.phase !== "question" || p.choice !== null) return;
+    const q = s.quiz.questions[s.q];
+    if (!isPin(q) && q.type !== "puzzle") return;
+    p.draft = Array.isArray(raw) && !raw.length ? null : this.cleanChoice(q, raw) ?? p.draft ?? null;
     await this.persist();
   }
 
@@ -766,17 +789,23 @@ export class GameRoom extends DurableObject {
     const q = s.quiz.questions[s.q];
     const qq = this.withPerm(q);
     for (const p of Object.values(s.players)) {
+      if (p.choice === null && p.draft) { p.choice = p.draft; p.ms = q.time * 1000; p.auto = true; }  // didn't lock in: the draft counts
+      p.draft = null;
       p.right = isRight(qq, p.choice);
       // Pin questions give credit for each area found; quiz questions are all or nothing.
       const share = isPin(q) ? (p.choice === null ? 0 : areasFound(q, p.choice) / q.regions.length)
         : q.type === "slider" ? sliderShare(q, p.choice) : p.right ? 1 : 0;
-      if (isPin(q)) p.found = p.choice === null ? 0 : areasFound(q, p.choice);
-      if (share > 0) {
-        // Right answers earn 500-1000: the faster, the closer to 1000. Partly right pins earn their share of that.
-        const frac = Math.min(1, p.ms / (q.time * 1000));
-        p.gained = Math.round(1000 * (1 - frac / 2) * share);
-        p.score += p.gained;
+      if (isPin(q)) {
+        p.found = p.choice === null ? 0 : areasFound(q, p.choice);
+        p.stray = strayPins(q, p.choice);   // pins outside every area
       }
+      // Right answers earn 500-1000: the faster, the closer to 1000. Partly right pins earn their share of that.
+      const frac = Math.min(1, p.ms / (q.time * 1000));
+      p.gained = share > 0 ? Math.round(1000 * (1 - frac / 2) * share) : 0;
+      // The host can make stray pins cost points (never taking a total below zero).
+      if (isPin(q) && q.penalty && p.stray) p.gained -= q.penalty * p.stray;
+      if (p.gained < 0) p.gained = Math.max(p.gained, -p.score);
+      p.score += p.gained;
     }
     s.phase = "reveal";
     this.push();
@@ -828,7 +857,7 @@ export class GameRoom extends DurableObject {
     // Puzzle items go out shuffled: shown[i] = answers[perm[i]].
     const answers = q.type === "puzzle" ? q.perm.map((k) => q.answers[k]) : q.type === "type" ? [] : q.answers || [];
     return { type: ["tf", "slider", "type", "puzzle"].includes(q.type) ? q.type : isPin(q) ? "pin" : "quiz", title: q.title, answers, time: q.time, image: q.image,
-      ...(isPin(q) ? { maxPins: q.regions.length } : {}),  // how many pins a player may drop (one per area)
+      ...(isPin(q) ? { maxPins: q.regions.length, penalty: q.penalty || 0 } : {}),  // how many pins a player may drop (one per area)
       ...(q.type === "slider" ? { min: q.min, max: q.max, step: q.step, unit: q.unit } : {}) };
   }
 
@@ -876,7 +905,7 @@ export class GameRoom extends DurableObject {
           }
           // Who answered what (every type): the host can show each player's reply, best first.
           st.replies = players
-            .map((p) => ({ name: p.name, look: p.look, choice: p.choice, ok: p.right, gained: p.gained, found: p.found || 0 }))
+            .map((p) => ({ name: p.name, look: p.look, choice: p.choice, ok: p.right, gained: p.gained, found: p.found || 0, stray: p.stray || 0, auto: !!p.auto }))
             .sort((a, b) => b.gained - a.gained || (a.choice === null) - (b.choice === null) || a.name.localeCompare(b.name));
         }
       }
@@ -884,6 +913,7 @@ export class GameRoom extends DurableObject {
       const p = s.players[pid];
       Object.assign(st, {
         role: "player", name: p.name, look: p.look, score: p.score, gained: p.gained, choice: p.choice, right: p.right, found: p.found || 0,
+        stray: p.stray || 0, auto: !!p.auto, draft: p.draft ?? null,
         rank: board.findIndex((r) => r.id === pid) + 1,
       });
     }
