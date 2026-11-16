@@ -38,7 +38,12 @@
 
   --ease: cubic-bezier(.23, 1, .32, 1);        /* strong ease-out: entrances, presses */
   --ease-move: cubic-bezier(.77, 0, .175, 1);  /* ease-in-out: things moving on screen */
-  --press: transform 160ms var(--ease);
+  /* Springs, Apple-style. --spring settles without overshoot; --spring-bouncy overshoots a touch
+     and settles (like a toggle switch). linear() samples the spring curve so CSS can play it. */
+  --spring: linear(0, 0.034 1.5%, 0.127 3.4%, 0.416 8.6%, 0.627 13.4%, 0.775 18.4%, 0.875 23.6%, 0.939 29.1%, 0.976 35.1%, 0.995 42.4%, 1.002 53%, 1);
+  --spring-bouncy: linear(0, 0.017 1.7%, 0.075 3.8%, 0.286 8.5%, 0.528 13.5%, 0.735 18.6%, 0.884 23.6%, 0.982 28.8%, 1.035 33.6%, 1.06 38.3%, 1.064 42.4%, 1.052 47.3%, 1.022 55.4%, 0.996 66.6%, 0.99 74.2%, 0.996 87.4%, 1);
+  /* Press: the release springs back with a little bounce... */
+  --press: transform 520ms var(--spring-bouncy);
 }
 
 @font-face { font-family: "Bricolage Grotesque"; src: url(/fonts/bricolage-grotesque.woff2) format("woff2"); font-weight: 500 800; font-style: normal; font-display: swap; }
@@ -289,7 +294,8 @@ input::placeholder { color: rgba(246, 241, 233, .28); }
 .pick { position: relative; cursor: pointer; }
 .pick input { position: absolute; opacity: 0; inset: 0; }
 .pick i { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--edge); background: rgba(3, 42, 60, .5); color: transparent; font-style: normal; font-weight: 700; transition: background-color .2s ease, border-color .2s ease, color .2s ease, var(--press); }
-.pick input:checked + i { background: var(--good); border-color: var(--good); color: var(--bg); transform: scale(1.06); }
+.pick input:checked + i { background: var(--good); border-color: var(--good); color: var(--bg); transform: scale(1.06); animation: tick .5s var(--spring-bouncy); }
+@keyframes tick { from { transform: scale(.6); } }
 .pick input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hint { color: var(--mute); font-size: 14px; letter-spacing: 0; margin-top: -6px; }
 .add { width: 100%; height: 76px; border-radius: 28px; border: 1.5px dashed var(--edge); background: rgba(6, 66, 92, .55); color: var(--ink); font-weight: 600; transition: color .2s ease, border-color .2s ease, var(--press); }
@@ -331,6 +337,7 @@ button.tile:active { transform: scale(.97); }
 .set-group { display: grid; border-radius: 18px; background: var(--solid); border: 1.5px solid var(--edge-soft); overflow: hidden; }
 .set-row { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 14px 0 16px; text-align: left; color: var(--ink);
   font-size: 16px; font-weight: 600; transition: background-color .15s ease, var(--press); }
+.set-row:active { transform: scale(.985); }
 .set-row + .set-row { box-shadow: inset 0 1px 0 var(--line); }
 .set-row > span { flex: 1; white-space: nowrap; }
 .set-row .set-val { font-weight: 600; color: rgba(246, 241, 233, .78); font-variant-numeric: tabular-nums; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -355,13 +362,24 @@ button.tile:active { transform: scale(.97); }
 .pop { position: fixed; z-index: 50; width: min(300px, calc(100vw - 24px)); padding: 6px; border-radius: 22px;
   background: rgba(6, 66, 92, .9); -webkit-backdrop-filter: blur(30px) saturate(160%); backdrop-filter: blur(30px) saturate(160%);
   border: 1px solid rgba(246, 241, 233, .22); box-shadow: 0 18px 50px rgba(1, 16, 28, .55), inset 0 1px 0 rgba(246, 241, 233, .12);
-  animation: pop-in .22s var(--ease) both; }
-.pop.out { animation: pop-out .14s ease-in both; }
-@keyframes pop-in { from { opacity: 0; transform: scale(.92); } }
-@keyframes pop-out { to { opacity: 0; transform: scale(.96); } }
+  animation: pop-in .5s var(--spring-bouncy) both; }
+.pop.out { animation: pop-out .16s cubic-bezier(.4, 0, 1, 1) both; }
+@keyframes pop-in { from { opacity: 0; transform: scale(.6); } 30% { opacity: 1; } }
+@keyframes pop-out { to { opacity: 0; transform: scale(.88); } }
+/* list options inside a picker cascade in */
+.pop-opt, .pop-chip { animation: opt-in .42s var(--spring) both; }
+.pop-opt:nth-child(2), .pop-chip:nth-child(2) { animation-delay: 25ms; }
+.pop-opt:nth-child(3), .pop-chip:nth-child(3) { animation-delay: 45ms; }
+.pop-opt:nth-child(n+4), .pop-chip:nth-child(n+4) { animation-delay: 60ms; }
+@keyframes opt-in { from { opacity: 0; transform: translateY(6px); } }
+.pop-opt i { transition: opacity .2s ease, transform .45s var(--spring-bouncy); transform: scale(.4); }
+.pop-opt.on i { transform: scale(1); }
+/* a value that just changed gives a small bump */
+.bump { animation: bump .42s var(--spring-bouncy); }
+@keyframes bump { 30% { transform: scale(1.12); } }
 .pop-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; padding: 2px 6px 2px 12px; }
 .pop-head strong { font: 700 15px var(--display); }
-.pop-done { height: 32px; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--bg); font-weight: 700; font-size: 14px; transition: var(--press); }
+.pop-done { height: 32px; padding: 0 14px; border-radius: 999px; background: var(--accent); color: var(--bg); font-weight: 700; font-size: 14px; transition: var(--press), background-color .2s ease; }
 .pop-done:active { transform: scale(.95); }
 .pop-list { display: grid; padding: 2px; }
 .pop-opt { display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 6px 12px; border-radius: 14px; text-align: left; color: var(--ink); transition: background-color .15s ease; }
@@ -373,7 +391,7 @@ button.tile:active { transform: scale(.97); }
 .pop-opt:hover, .pop-opt:focus-visible { background: rgba(246, 241, 233, .1); outline: 0; }
 .pop-num { display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; align-items: center; gap: 8px; padding: 6px 6px 4px; }
 .pop-step { height: 52px; border-radius: 16px; background: rgba(246, 241, 233, .1); color: var(--ink); font-size: 26px; font-weight: 500; transition: background-color .15s ease, var(--press); }
-.pop-step:active { transform: scale(.94); background: rgba(246, 241, 233, .18); }
+.pop-step:active { transform: scale(.9); background: rgba(246, 241, 233, .18); }
 .pop-num label { display: flex; align-items: baseline; justify-content: center; gap: 6px; min-width: 0; }
 .pop-num input { width: 5ch; field-sizing: content; min-width: 2ch; max-width: 100%; background: none; border: 0; outline: 0; text-align: center; color: var(--ink);
   font: 800 34px/1.1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
@@ -387,7 +405,11 @@ button.tile:active { transform: scale(.97); }
 .pop-chip { height: 32px; padding: 0 12px; border-radius: 999px; background: rgba(246, 241, 233, .1); color: var(--ink); font-weight: 600; font-size: 14px; transition: var(--press); }
 .pop-chip:active { transform: scale(.95); }
 @media (prefers-reduced-transparency: reduce) { .pop { background: var(--teal-900); -webkit-backdrop-filter: none; backdrop-filter: none; } }
-@media (prefers-reduced-motion: reduce) { .pop, .pop.out { animation-name: fade; } }
+@media (prefers-reduced-motion: reduce) {
+  .pop, .pop.out { animation-name: fade; }
+  .pop-opt, .pop-chip, .bump, .pick input:checked + i { animation: none; }
+  .seg-thumb { transition: none; }
+}
 
 .sl-preview { padding: 8px 4px 0; }
 .hint.warn { color: var(--vermilion-hi); }
@@ -412,7 +434,9 @@ button.tile:active { transform: scale(.97); }
 .slider-stage .nl-ends { font-size: 15px; }
 /* the player's slider */
 .guess { width: min(560px, 100%); display: grid; gap: 14px; justify-items: center; margin-top: 8px; }
-.guess-value { font: 800 clamp(44px, 9vw, 72px)/1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.guess-value { display: inline-block; font: 800 clamp(44px, 9vw, 72px)/1 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.nudge .btn { transition: var(--press), background-color .2s ease; }
+.nudge .btn:active { transform: scale(.88); }
 .guess .nl-ends { width: 100%; margin-top: -6px; }
 .guess input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; border-radius: 7px; outline: 0; cursor: pointer;
   background: linear-gradient(90deg, var(--accent) var(--fill, 50%), rgba(246, 241, 233, .16) var(--fill, 50%)); touch-action: none; }
@@ -509,7 +533,15 @@ button.tile:active { transform: scale(.97); }
 /* ---------- pin questions ---------- */
 .seg { display: inline-flex; align-items: stretch; height: var(--ctl-sm); padding: 3px; border-radius: 999px; background: var(--solid); border: 1.5px solid var(--edge-soft); }
 .seg button { white-space: nowrap; padding: 0 14px; border-radius: 999px; font-size: 15px; font-weight: 600; color: rgba(246, 241, 233, .85); transition: background-color .2s ease, color .2s ease, var(--press); }
-.seg button.on { background: var(--ink); color: var(--bg); }
+.seg { position: relative; }
+.seg button { position: relative; z-index: 1; }
+.seg button.on { color: var(--bg); }
+/* the white pill slides between choices on a spring; JS places it (--x, --w) */
+.seg-thumb { position: absolute; top: 3px; bottom: 3px; left: 0; width: var(--w, 0); transform: translateX(var(--x, 0));
+  border-radius: 999px; background: var(--ink); box-shadow: 0 2px 8px rgba(1, 16, 28, .35);
+  transition: transform .55s var(--spring-bouncy), width .55s var(--spring-bouncy); }
+.seg-thumb.instant { transition: none; }
+.seg:not(:has(.seg-thumb)) button.on { background: var(--ink); }  /* before JS places the pill */
 .pinbox { position: relative; display: inline-block; max-width: 100%; line-height: 0; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .pinbox img { max-width: 100%; max-height: 380px; width: auto; height: auto; border-radius: 18px; }
 .pinbox.draw, .pinbox.tap { cursor: crosshair; touch-action: none; }
@@ -612,6 +644,10 @@ button.tile:active { transform: scale(.97); }
 
 /* ---------- presses and hovers ---------- */
 .ghost:active, .navlink:active, .seg button:active, .pick:active i, .add:active, .newtile:active { transform: scale(.97); }
+/* ...while pressing in is quick and firm. */
+.btn:active, button.tile:active, .ghost:active, .navlink:active, .seg button:active, .pick:active i, .add:active, .newtile:active,
+.chip-btn:active, .set-row:active, .pop-done:active, .pop-step:active, .pop-chip:active, .tf-pick:active, .nudge .btn:active {
+  transition-duration: 90ms; transition-timing-function: ease-out; }
 @media (hover: hover) and (pointer: fine) {
   .btn:hover { background-color: var(--solid-hi); border-color: var(--ice); }
   .btn.primary:hover { background-color: var(--vermilion-hi); }

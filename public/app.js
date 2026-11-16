@@ -536,6 +536,24 @@
   // It springs out of the control you tapped, closes on Done, Escape or a tap outside.
   const CHEV = '<svg class="chev" viewBox="0 0 8 13" aria-hidden="true"><path d="M1.5 1.5 6.5 6.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const UPDOWN = '<svg class="chev" viewBox="0 0 10 14" aria-hidden="true"><path d="M2 5l3-3 3 3M2 9l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  // Replay the little "bump" on an element whose value just changed.
+  const bump = (el) => { if (!el) return; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); };
+  // Segmented control: a pill that slides to the selected choice on a spring.
+  function placeThumb(seg, from) {
+    let t = seg.querySelector('.seg-thumb');
+    if (!t) { t = document.createElement('span'); t.className = 'seg-thumb'; t.setAttribute('aria-hidden', 'true'); seg.prepend(t); }
+    const on = seg.querySelector('button.on');
+    if (!on) return;
+    const set = (x, w) => { t.style.setProperty('--x', `${x}px`); t.style.setProperty('--w', `${w}px`); };
+    if (from) {                       // start where the old pill was, then glide
+      t.classList.add('instant'); set(from.x, from.w); void t.offsetWidth; t.classList.remove('instant');
+    } else if (!t.style.getPropertyValue('--w')) {
+      t.classList.add('instant'); set(on.offsetLeft, on.offsetWidth); void t.offsetWidth; t.classList.remove('instant'); return;
+    }
+    set(on.offsetLeft, on.offsetWidth);
+  }
+  const thumbAt = (seg) => { const t = seg?.querySelector('.seg-thumb'); return t ? { x: parseFloat(t.style.getPropertyValue('--x')) || 0, w: parseFloat(t.style.getPropertyValue('--w')) || 0 } : null; };
+
   let pop = null;
   function closePicker(refocus = true) {
     if (!pop) return;
@@ -593,7 +611,7 @@
       const stepBtn = e.target.closest('.pop-step');
       if (stepBtn) {
         const v = Math.round(((num(input.value) ?? 0) + stepBtn.dataset.d * (spec.step || 1)) * 1e6) / 1e6;
-        input.value = v; spec.onChange(v); buzz(6); return;
+        input.value = v; spec.onChange(v); bump(input); buzz(6); return;
       }
       if (e.target.closest('.pop-done')) closePicker();
     });
@@ -738,7 +756,9 @@
       if (!card) return;
       const show = { time: `${q.time}s`, min: withUnit(q.min, q.unit), max: withUnit(q.max, q.unit), answer: withUnit(q.answer, q.unit),
         unit: q.unit || 'None', step: numFmt(q.step), margin: marginText(q.margin) };
-      card.querySelectorAll('.set-val').forEach((el) => { el.textContent = show[el.dataset.for]; });
+      card.querySelectorAll('.set-val').forEach((el) => {
+        if (el.textContent !== show[el.dataset.for]) { el.textContent = show[el.dataset.for]; bump(el); }
+      });
       const prev = card.querySelector('.sl-preview');
       if (prev) prev.innerHTML = sliderPreview(q);
     }
@@ -748,7 +768,12 @@
       const sq = { min: +q.min, max: +q.max, unit: q.unit };
       return numberLine(sq, { answer: +q.answer, tolerance: MARGIN_SHARE[q.margin] * (sq.max - sq.min) });
     }
-    const draw = () => { closePicker(false); list.innerHTML = d.questions.map(card).join(''); };
+    const draw = () => {
+      closePicker(false);
+      list.innerHTML = d.questions.map(card).join('');
+      list.querySelectorAll('.seg').forEach((seg) => placeThumb(seg));
+    };
+    document.fonts?.ready.then(() => list.querySelectorAll('.seg').forEach((seg) => placeThumb(seg)));
     draw();
 
     // The intro picture: shown in the lobby while players join, and on the dashboard tile.
@@ -827,7 +852,16 @@
       const act = t.dataset.act;
       if (act === 'del') d.questions.splice(i, 1);
       if (act === 'noimg') { q.image = null; q.regions = []; }
-      if (act === 'type') { q.type = t.dataset.type; if (q.type === 'tf' && q.correct > 1) q.correct = 0; }
+      if (act === 'type') {
+        if (q.type === t.dataset.type) return;
+        const from = thumbAt(t.closest('.seg'));
+        q.type = t.dataset.type;
+        if (q.type === 'tf' && q.correct > 1) q.correct = 0;
+        save(); draw();
+        const seg = list.querySelector(`[data-q="${i}"] .seg`);
+        if (seg && from) placeThumb(seg, from);
+        return;
+      }
       if (act === 'rdel') q.regions.splice(+t.dataset.r, 1);
       save(); draw();
     });
@@ -1282,20 +1316,50 @@
             <div class="lockbar"><button class="btn primary" id="lock">Lock in →</button></div>
           </main>`;
         const range = $('#guess');
-        const show = () => {
-          $('#gv').textContent = withUnit(+range.value, q.unit);
-          range.style.setProperty('--fill', `${((range.value - q.min) / (q.max - q.min)) * 100}%`);
+        const fill = (v) => range.style.setProperty('--fill', `${((v - q.min) / (q.max - q.min)) * 100}%`);
+        const show = () => { $('#gv').textContent = withUnit(+range.value, q.unit); fill(+range.value); };
+        // − / + glide the thumb to the next value on a spring (dragging stays 1:1 with the finger).
+        let glide = 0;
+        const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const glideTo = (target) => {
+          cancelAnimationFrame(glide);
+          target = Math.min(q.max, Math.max(q.min, Math.round(target * 1e6) / 1e6));
+          $('#gv').textContent = withUnit(target, q.unit);
+          bump($('#gv'));
+          if (reduce) { range.value = target; return fill(target); }
+          const from = +range.value, t0 = performance.now(), dur = 420;
+          range.step = 'any';
+          const tick = (now) => {
+            const p = Math.min(1, (now - t0) / dur);
+            const e = 1 - Math.exp(-6 * p) * Math.cos(9 * p);   // a soft spring with a hint of overshoot
+            const v = p < 1 ? from + (target - from) * e : target;
+            range.value = v; fill(v);
+            if (p < 1) glide = requestAnimationFrame(tick);
+            else { range.step = q.step; range.value = target; }
+          };
+          glide = requestAnimationFrame(tick);
         };
-        range.oninput = show;
+        range.oninput = () => { cancelAnimationFrame(glide); range.step = q.step; show(); };
+        let pending = null;   // the value the − / + buttons are heading to (so quick taps add up)
         document.querySelectorAll('.nudge [data-n]').forEach((b) => {
-          b.onclick = () => { range.value = +range.value + b.dataset.n * q.step; show(); buzz(6); };
+          b.onclick = () => {
+            const base = pending ?? +range.value;
+            pending = Math.min(q.max, Math.max(q.min, base + b.dataset.n * q.step));
+            glideTo(pending);
+            clearTimeout(b._t); b._t = setTimeout(() => { pending = null; }, 450);
+            buzz(6);
+          };
         });
         show();
         $('#lock').onclick = () => {
           $('#lock').disabled = true;
           range.disabled = true;
           buzz(12);
-          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: +range.value })
+          cancelAnimationFrame(glide);
+          const v = pending ?? +range.value;   // mid-glide: lock in where it was heading
+          const guess = Math.round((Math.round((v - q.min) / q.step) * q.step + q.min) * 1e6) / 1e6;
+          range.step = q.step; range.value = guess; show();
+          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: guess })
             .catch((err) => { toast(err.message); $('#lock').disabled = false; range.disabled = false; });
         };
         return;
