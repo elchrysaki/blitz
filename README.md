@@ -88,7 +88,7 @@ The palette comes from a teal-and-vermilion wall painting. The colors were white
 | `--ember` | `#B8360B` | wrong (the sun's burnt core) |
 
 - **Bricolage Grotesque** (headlines, numbers, PIN, scores) and **DM Sans** (everything else). Both are served from `public/fonts/`.
-- **Logo** (`public/brand/`): `mark.svg` is a vermilion tile with a gallery-white lightning bolt and cream denim-style stitching. `logo.svg` is the mark plus the "blitz." wordmark. `mark-180.png` is the phone home-screen icon and `mark-512.png` a larger export. The mark is only the browser tab icon (and the phone home-screen icon); the page itself shows just the "blitz." wordmark.
+- **Logo** (`public/brand/`): `mark.svg` is a vermilion tile with a gallery-white lightning bolt and cream denim-style stitching. `logo.svg` is the mark plus the "blitz." wordmark. `mark-180.png` is the phone home-screen icon and `mark-512.png` a larger export. `tab.svg` is the browser tab icon: a square deep-teal tile with the wordmark's "b." (white b, vermilion dot), drawn as shapes so it's crisp at 16 px. The mark is the phone home-screen icon; the page itself shows just the "blitz." wordmark.
 
 ## Speed
 

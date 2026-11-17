@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Blitz">
+  <!-- Browser-tab icon only: a square deep-teal tile with the wordmark's "b." (gallery-white b, vermilion dot).
+       Drawn as shapes, since tab icons can't load web fonts. The site's own logo is unchanged. -->
+  <rect width="64" height="64" rx="9" fill="#032A3C"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="7.5" fill="none" stroke="#0A6C93" stroke-width="3"/>
+  <g fill="#F6F1E9">
+    <rect x="10" y="9" width="12" height="45" rx="3.5"/>
+    <path fill-rule="evenodd" d="M31 23a15.5 15.5 0 1 1 0 31a15.5 15.5 0 1 1 0-31ZM31 31.5a7 7 0 1 0 0 14a7 7 0 1 0 0-14Z"/>
+  </g>
+  <circle cx="54" cy="48" r="6" fill="#FF5A1F"/>
+</svg>
