@@ -3,7 +3,7 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const L = 'ABCD';
-  const TIMES = [10, 20, 30, 60];
+  const TIMES = [10, 20, 30, 60, 90, 120];
   const fmt = (n) => Number(n).toLocaleString('en-US');
   const signed = (n) => (n < 0 ? `−${fmt(-n)}` : `+${fmt(n)}`);   // points won or lost this question
   const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
@@ -551,7 +551,17 @@
   const acceptChips = (list) => `<div class="accepts">${list.map((a, k) => `<span class="accept ${k ? '' : 'main'}">${esc(a)}</span>`).join('')}</div>`;
   const TYPE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><text x="16" y="23" text-anchor="middle" font-family="Bricolage Grotesque, DM Sans, sans-serif" font-weight="800" font-size="19" fill="currentColor">Aa</text></svg>';
   const PUZZLE_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 8h20M6 16h20M6 24h20" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
-  const TYPE_LABEL = { quiz: 'Quiz', tf: 'True / False', type: 'Type answer', puzzle: 'Puzzle', slider: 'Slider', pin: 'Pin' };
+  const TYPE_LABEL = { quiz: 'Quiz', tf: 'True / False', type: 'Type answer', puzzle: 'Puzzle', slider: 'Slider', pin: 'Pin',
+    poll: 'Poll', scale: 'Scale', drop: 'Drop pin', cloud: 'Word cloud', open: 'Open-ended', brain: 'Brainstorm' };
+  // Collect opinions: no right answer, no points. A quiz made only of these is a form.
+  const OPINION = ['poll', 'scale', 'drop', 'cloud', 'open', 'brain'];
+  const isOpinion = (t) => OPINION.includes(t);
+  const LIKERT = ['Strongly disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly agree'];
+  const NPS_ENDS = ['Not likely at all', 'Extremely likely'];
+  const OTHER_MAX = 60, CLOUD_MAX = 25, OPEN_MAX = 250, IDEA_MAX = 75;
+  const CLOUD_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 24a6 6 0 0 1-.8-11.95A8 8 0 0 1 23.6 10.5 6.75 6.75 0 0 1 23 24Z" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/></svg>';
+  const OPEN_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 7h20a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H14l-6 5v-5H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round"/></svg>';
+  const IDEA_ICON = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 4a8 8 0 0 0-4.6 14.6c.8.6 1.1 1.4 1.1 2.4v1h7v-1c0-1 .3-1.8 1.1-2.4A8 8 0 0 0 16 4ZM12.5 26h7M13.5 29h5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
   const boardRows = (players, limit) => players.slice(0, limit).map((p, i) => `
     <li><span class="rank">${i + 1}</span><span class="name">${esc(p.name)}</span>
@@ -599,6 +609,108 @@
           <span class="r-pts ${r.gained < 0 ? 'neg' : ''}">${r.gained ? signed(r.gained) : r.choice === null ? '–' : '0'}</span>
         </li>`).join('')}</ul>
     </section>`;
+
+  // ---------- opinion results ----------
+  // What the room said on an opinion question. `r` is the server's tally; `host` adds the words and names;
+  // `mine` is this player's own answer, highlighted.
+  const pctOf = (n, total) => (total ? Math.round((n / total) * 100) : 0);
+  const hbars = (rows, total, cls = '') => `<div class="hbars ${cls}">${rows.map((row, k) => `
+    <div class="hbar ${row.cls || ''} ${row.mine ? 'mine' : ''}" style="--w:${pctOf(row.n, total)}%;--i:${k}">
+      <span class="hb-label">${row.tag ? `<b>${row.tag}</b>` : ''}<span>${esc(row.label)}</span>${row.mine ? '<em>You</em>' : ''}</span>
+      <span class="hb-track"><i></i></span><span class="hb-n">${row.n}<small>${pctOf(row.n, total)}%</small></span>
+    </div>`).join('')}</div>`;
+  function wordCloud(words) {
+    if (!words?.length) return '<p class="empty">No words yet.</p>';
+    const top = words[0].n;
+    // Biggest in the middle: alternate the others either side.
+    const order = [];
+    words.forEach((w, k) => (k % 2 ? order.push(w) : order.unshift(w)));
+    return `<div class="cloud" role="img" aria-label="${esc(words.map((w) => `${w.text} (${w.n})`).join(', '))}">${order.map((w, k) => {
+      const size = 16 + Math.round((w.n / top) * 40);
+      return `<span class="cw c${k % 4}" style="--s:${size}px;--i:${k}">${esc(w.text)}</span>`;
+    }).join('')}</div>`;
+  }
+  function opinionView(q, r, { host = false, mine = null, image = null } = {}) {
+    if (!r) return '';
+    const total = r.total;
+    const people = `<p class="pinstat"><strong>${total}</strong> ${total === 1 ? 'answer' : 'answers'}</p>`;
+    const who = (x) => (x.name ? `<span class="op-who">${avatar(x.look || x.name, 'face')}<span>${esc(x.name)}</span></span>` : '');
+    if (q.type === 'poll') {
+      const rows = q.answers.map((a, k) => ({ label: a, n: r.counts[k], tag: L[k], cls: `t${k}`, mine: mine === k }));
+      if (q.other) rows.push({ label: 'Other', n: r.otherCount || 0, tag: '…', cls: 'tother', mine: typeof mine === 'string' });
+      return `${hbars(rows, total)}${people}
+        ${host && r.others?.length ? `<div class="others"><p class="eyebrow">“Other” answers</p>
+          <div class="typed">${r.others.map((o) => `<span class="typed-chip other-chip">${esc(o.text)}${o.name ? `<em>${esc(o.name)}</em>` : ''}</span>`).join('')}</div></div>` : ''}`;
+    }
+    if (q.type === 'scale') {
+      if (q.mode === 'nps') {
+        const top = Math.max(1, ...r.counts);
+        return `<div class="npsbox">
+            <div class="nps-score ${r.nps > 0 ? 'pos' : r.nps < 0 ? 'neg' : ''}"><small>NPS</small><b>${r.nps === undefined ? '–' : (r.nps > 0 ? '+' : '') + r.nps}</b></div>
+            <div class="nps-split"><span class="det"><b>${r.detractors || 0}</b> detractors (0–6)</span><span class="pas"><b>${r.passives || 0}</b> passives (7–8)</span><span class="pro"><b>${r.promoters || 0}</b> promoters (9–10)</span></div>
+          </div>
+          <div class="nps-bars">${r.counts.map((n, k) => `<div class="nb ${k <= 6 ? 'det' : k <= 8 ? 'pas' : 'pro'} ${mine === k ? 'mine' : ''}" style="--h:${Math.max(3, (n / top) * 100)}%"><span>${n}</span><i></i><b>${k}</b></div>`).join('')}</div>
+          <div class="nps-ends"><span>${esc(q.labels[0])}</span><span>${esc(q.labels[1])}</span></div>
+          ${r.avg !== null ? `<p class="pinstat">Average <strong>${r.avg}</strong> · ${total} ${total === 1 ? 'answer' : 'answers'}</p>` : people}`;
+      }
+      return `${hbars(q.labels.map((l, k) => ({ label: l, n: r.counts[k], tag: k + 1, cls: `sc${k}`, mine: mine === k })), total, 'scale-bars')}
+        ${r.avg !== null ? `<p class="pinstat">Average <strong>${r.avg}</strong> of 5 · ${total} ${total === 1 ? 'answer' : 'answers'}</p>` : people}`;
+    }
+    if (q.type === 'cloud') return `${wordCloud(r.words)}${people}`;
+    if (q.type === 'drop') {
+      return host ? `${pinBox(image || q.image, (r.pins || []).map((p) => marker(p.x, p.y, 'small drop-in crowd', p.name || '')).join(''))}${people}`
+        : `${mine ? pinBox(q.image, marker(mine[0], mine[1], 'drop-in ok')) : ''}<p class="lede">Your pin is on the host’s screen with everyone else’s.</p>`;
+    }
+    if (q.type === 'open') {
+      return host ? (r.answers?.length ? `<div class="cards-wall">${r.answers.map((x, k) => `<figure class="say" style="--i:${Math.min(k, 16)}"><blockquote>${esc(x.text)}</blockquote>${who(x)}</figure>`).join('')}</div>${people}`
+        : '<p class="empty">No answers.</p>') : '<p class="lede">Your answer is on the host’s screen.</p>';
+    }
+    if (q.type === 'brain') {
+      const ideas = r.ideas || [];
+      const top = Math.max(1, ...ideas.map((x) => x.votes));
+      return ideas.length ? `<ol class="idea-rank">${ideas.map((x, k) => `
+        <li class="${k === 0 && x.votes ? 'winner' : ''}" style="--w:${(x.votes / top) * 100}%;--i:${Math.min(k, 12)}">
+          <span class="ir-n">${k + 1}</span><span class="ir-main"><strong>${esc(x.text)}</strong>${x.members.length > 1 ? `<small>${x.members.filter((m) => m !== x.text).map(esc).join(' · ')}</small>` : ''}</span>
+          <span class="ir-v">${x.votes}<small>vote${x.votes === 1 ? '' : 's'}</small></span><i class="ir-bar"></i></li>`).join('')}</ol>` : '<p class="empty">No ideas came in.</p>';
+    }
+    return '';
+  }
+  // One answer in words, for any question type (opinion and quiz): the responses download and "who said what".
+  function answerWords(q, c, row = {}) {
+    if (c === null || c === undefined) return '';
+    switch (q.type) {
+      case 'poll': return typeof c === 'string' ? `Other: ${c}` : q.answers[c];
+      case 'scale': return q.mode === 'nps' ? String(c) : `${c + 1} · ${q.labels[c]}`;
+      case 'drop': return `Pin at ${Math.round(c[0] * 100)}% across, ${Math.round(c[1] * 100)}% down`;
+      case 'cloud': case 'open': case 'type': return String(c);
+      case 'brain': return c.join(' | ');
+      case 'tf': return c ? 'False' : 'True';
+      case 'slider': return withUnit(c, q.unit);
+      case 'puzzle': return c.map((d) => q.answers[d]).join(' → ');
+      case 'pin': return `${row.found || 0} area${row.found === 1 ? '' : 's'} found${row.stray ? `, ${row.stray} stray` : ''}`;
+      default: return q.answers?.[c] ?? String(c);
+    }
+  }
+  // Every answer of a finished game as a spreadsheet (CSV opens in Excel, Numbers and Google Sheets).
+  function downloadResponses(title, responses) {
+    const cell = (v) => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const lines = [['#', 'Question', 'Type', 'Name', 'Answer', 'Voted for', 'Points', 'Correct'].join(',')];
+    responses.forEach((e, k) => {
+      const q = e.question;
+      const scored = !isOpinion(q.type);
+      for (const row of e.rows) {
+        lines.push([k + 1, q.title, TYPE_LABEL[q.type] || q.type, e.anon ? 'Anonymous' : row.name,
+          answerWords(q, row.choice, row) || (row.choice === null ? '(no answer)' : ''), (row.vote || []).join(' | '),
+          scored ? row.gained : '', scored ? (row.ok ? 'yes' : 'no') : ''].map(cell).join(','));
+      }
+    });
+    const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${slug(title) || 'blitz'}-responses.csv`;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
 
   // ---------- celebrations ----------
   const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -853,7 +965,7 @@
       </main>`;
     placeThumb($('#exsort'));
     document.fonts?.ready.then(() => placeThumb($('#exsort')));
-    const TYPE_SHORT = { quiz: 'Quiz', tf: 'True/False', type: 'Type answer', puzzle: 'Puzzle', slider: 'Slider', pin: 'Pin' };
+    const TYPE_SHORT = { ...TYPE_LABEL, tf: 'True/False' };
     const card = (q) => `
       <article class="card qtile excard" data-id="${q.id}">
         <button class="cover" data-preview="${q.id}" aria-label="Preview ${esc(q.title)}">
@@ -1282,7 +1394,8 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
   // ---------- create ----------
 
   const blankQuestion = () => ({ type: 'quiz', title: '', image: null, answers: ['', '', '', ''], correct: 0, regions: [], time: 20,
-    min: 0, max: 100, step: 1, answer: 50, unit: '', margin: 'medium', accepted: ['', '', '', ''], penalty: 0 });
+    min: 0, max: 100, step: 1, answer: 50, unit: '', margin: 'medium', accepted: ['', '', '', ''], penalty: 0,
+    other: false, mode: 'likert', labels: [...LIKERT], ends: [...NPS_ENDS], anon: false });
   const PENALTY_OPTS = [[0, 'Free', 'Pins outside the areas cost nothing'], [100, '−100 each', 'A small cost for guessing'],
     [250, '−250 each', 'Guessing costs points'], [500, '−500 each', 'Only pin when you’re sure']];
   const penaltyText = (n) => (n ? `−${fmt(n)} each` : 'Free');
@@ -1294,7 +1407,16 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
     ['puzzle', 'Puzzle', 'Put 2–4 items in the right order'],
     ['slider', 'Slider', 'Guess a number on a scale'],
     ['pin', 'Pin', 'Drop a pin on the right part of a picture'],
-  ];
+    ['-', 'Collect opinions · no points'],
+    ['poll', 'Poll', '2–4 options, and an “Other” players type in if you like'],
+    ['scale', 'Scale', 'Agree or disagree on your own labels, or a 0–10 NPS'],
+    ['drop', 'Drop pin', 'Everyone pins a spot on a picture'],
+    ['cloud', 'Word cloud', 'One word or short phrase each; popular ones grow'],
+    ['open', 'Open-ended', 'Longer written answers'],
+    ['brainstorm', 'Brainstorm', 'Ideas, then group them, then everyone votes'],
+  ].map((t) => (t[0] === 'brainstorm' ? ['brain', t[1], t[2]] : t));
+  // Who's named on opinion answers (quiz questions always show names on the leaderboard).
+  const ANON_MODES = [['named', 'Named'], ['anon', 'Anonymous'], ['mixed', 'Mixed']];
   const TYPE_MAX = 40;   // longest typed answer
   const MARGIN_LABELS = [['exact', 'Exact'], ['low', '±5%'], ['medium', '±10%'], ['high', '±20%']];  // of the range
   const MARGIN_SHARE = { exact: 0, low: 0.05, medium: 0.1, high: 0.2 };
@@ -1344,9 +1466,14 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
     if (!d || typeof d !== 'object' || !Array.isArray(d.questions) || !d.questions.length) return null;
     return {
       ...d, title: String(d.title || ''), cover: d.cover || null, public: d.public === true,
+      anonMode: ANON_MODES.some(([m]) => m === d.anonMode) ? d.anonMode : 'named',
       questions: d.questions.map((q) => {
         const u = { ...blankQuestion(), ...(q && typeof q === 'object' ? q : {}) };
-        if (!TYPES.some(([t]) => t === u.type)) u.type = 'quiz';
+        if (!TYPES.some(([t]) => t === u.type && t !== '-')) u.type = 'quiz';
+        u.labels = LIKERT.map((def, k) => (Array.isArray(q?.labels) && typeof q.labels[k] === 'string' ? q.labels[k] : def));
+        u.ends = NPS_ENDS.map((def, k) => (Array.isArray(q?.ends) && typeof q.ends[k] === 'string' ? q.ends[k] : def));
+        if (u.mode !== 'nps') u.mode = 'likert';
+        u.other = u.other === true; u.anon = u.anon === true;
         u.answers = pad4(q?.answers);
         u.accepted = pad4(q?.accepted);
         u.regions = Array.isArray(q?.regions) ? q.regions : [];
@@ -1365,7 +1492,16 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
     title: quiz.title,
     public: !!quiz.public,
     cover: quiz.cover || null,
-    questions: quiz.questions.map((q) => (q.type === 'pin'
+    // Names on opinion answers: all named, all anonymous, or a mix.
+    anonMode: (() => {
+      const ops = quiz.questions.filter((q) => isOpinion(q.type));
+      return !ops.length || ops.every((q) => !q.anon) ? 'named' : ops.every((q) => q.anon) ? 'anon' : 'mixed';
+    })(),
+    questions: quiz.questions.map((q) => isOpinion(q.type)
+      ? { ...blankQuestion(), type: q.type, title: q.title, image: q.image, time: q.time, anon: !!q.anon,
+        answers: [...(q.answers || []), '', '', '', ''].slice(0, 4), other: !!q.other, mode: q.mode === 'nps' ? 'nps' : 'likert',
+        labels: q.mode === 'nps' ? [...LIKERT] : [...(q.labels || LIKERT)], ends: q.mode === 'nps' ? [...(q.labels || NPS_ENDS)] : [...NPS_ENDS] }
+      : (q.type === 'pin'
       ? { ...blankQuestion(), type: 'pin', title: q.title, image: q.image, regions: q.regions, time: q.time, penalty: q.penalty || 0 }
       : q.type === 'tf' ? { ...blankQuestion(), type: 'tf', title: q.title, image: q.image, correct: q.correct, time: q.time }
       : q.type === 'slider' ? { ...blankQuestion(), type: 'slider', title: q.title, image: q.image, time: q.time,
@@ -1418,7 +1554,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
     el.setAttribute('aria-label', spec.title);
     const head = `<div class="pop-head"><strong>${esc(spec.title)}</strong>${spec.kind === 'choices' ? '' : '<button class="pop-done">Done</button>'}</div>`;
     if (spec.kind === 'choices') {
-      el.innerHTML = head + `<div class="pop-list" role="listbox">${spec.options.map(([v, label, sub]) => `
+      el.innerHTML = head + `<div class="pop-list" role="listbox">${spec.options.map(([v, label, sub]) => v === '-' ? `<p class="pop-sec">${esc(label)}</p>` : `
         <button class="pop-opt ${String(v) === String(spec.value) ? 'on' : ''}" role="option" aria-selected="${String(v) === String(spec.value)}" data-v="${esc(v)}">
           <span><b>${esc(label)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span><i>✓</i></button>`).join('')}</div>`;
     } else if (spec.kind === 'number') {
@@ -1522,6 +1658,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
             </div>
             <p class="hint" id="visHint"></p>
           </div>
+          <div class="vis" id="anonBox" hidden></div>
           <button class="import-cta" id="importOpen" type="button">
             <span class="import-ic" aria-hidden="true">${IMPORT_ICON}</span>
             <span><b>Already have your questions written?</b><small>Import them from a file, a folder with pictures, or pasted text</small></span>
@@ -1542,7 +1679,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
            </div>`
         : `<label class="drop">
              <input type="file" accept="image/*" hidden>
-             <span class="drop-hint"><b>Add a picture</b><small>${pin ? 'Required — players drop their pin on it' : 'Click or drop an image — optional'}</small></span>
+             <span class="drop-hint"><b>Add a picture</b><small>${pin || q.type === 'drop' ? 'Required — players drop their pin on it' : 'Click or drop an image — optional'}</small></span>
            </label>`;
       return `
       <section class="card qcard" data-q="${i}">
@@ -1550,13 +1687,16 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
           <span class="num">${String(i + 1).padStart(2, '0')}</span>
           <button class="chip-btn type-chip" data-pick="qtype" aria-haspopup="dialog" aria-expanded="false" aria-label="Question type: ${TYPE_LABEL[q.type]}">
             <span>Type</span><b class="set-val" data-for="qtype">${TYPE_LABEL[q.type]}</b>${UPDOWN}</button>
+          ${isOpinion(q.type) ? '<span class="op-badge">No points</span>' : ''}
           <span class="grow"></span>
           <button class="chip-btn" data-pick="time" aria-haspopup="dialog" aria-expanded="false" aria-label="Time to answer: ${q.time} seconds">
             <span>Time</span><b class="set-val" data-for="time">${q.time}s</b>${UPDOWN}</button>
         </header>
-        <input class="q-input" data-f="title" maxlength="200" placeholder="${{ pin: 'e.g. Tap the ugliest part of this UI', tf: 'e.g. The Moon has its own light', slider: 'e.g. How tall is the Eiffel Tower?', type: 'e.g. What’s the capital of Australia?', puzzle: 'e.g. Put these planets in order from the Sun' }[q.type] || 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
+        <input class="q-input" data-f="title" maxlength="200" placeholder="${{ pin: 'e.g. Tap the ugliest part of this UI', tf: 'e.g. The Moon has its own light', slider: 'e.g. How tall is the Eiffel Tower?', type: 'e.g. What’s the capital of Australia?', puzzle: 'e.g. Put these planets in order from the Sun',
+          poll: 'e.g. Where should we go for lunch?', scale: 'e.g. Today’s session was useful', drop: 'e.g. Where do you sit in the office?',
+          cloud: 'e.g. Describe this week in one word', open: 'e.g. What should we do differently?', brain: 'e.g. Ideas for our next team day' }[q.type] || 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
         ${picture}
-        ${pin ? `<div class="pinrow"><p class="hint">${!q.image ? 'Add a picture, then drag on it to mark the right area.'
+        ${isOpinion(q.type) ? opinionEdit(q, i) : pin ? `<div class="pinrow"><p class="hint">${!q.image ? 'Add a picture, then drag on it to mark the right area.'
           : regions.length ? `${regions.length} area${regions.length === 1 ? '' : 's'} marked — players get ${regions.length} pin${regions.length === 1 ? '' : 's'} and need one in every area for full points. Drag to add more.`
           : 'Drag on the picture to mark the right area. You can mark several.'}</p>
           ${q.image ? '<button class="ghost" data-act="noimg">Remove picture</button>' : ''}</div>
@@ -1619,6 +1759,68 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
         ${d.questions.length > 1 ? '<div class="qfoot"><button class="ghost" data-act="del">Remove question</button></div>' : ''}
       </section>`;
     };
+    // An on/off row (a switch).
+    const switchRow = (f, on, title, sub) => `<label class="switch-row"><input type="checkbox" data-f="${f}" ${on ? 'checked' : ''}>
+      <span><b>${title}</b><small>${sub}</small></span><i class="switch" aria-hidden="true"></i></label>`;
+    // The editor for an opinion question (no right answer, no points).
+    function opinionEdit(q, i) {
+      const named = d.anonMode === 'mixed'
+        ? switchRow('named', !q.anon, 'Show who answered', 'Off: this question is anonymous')
+        : `<p class="hint anon-note">${d.anonMode === 'anon' ? '🔒 Anonymous: you’ll see the answers, never who gave them.' : '👤 Named: you’ll see who answered what.'}</p>`;
+      const body = {
+        poll: () => `
+          <div class="answers-edit">
+            ${q.answers.map((a, k) => `
+              <div class="ans t${k}"><b>${L[k]}</b>
+                <input data-f="answer" data-k="${k}" maxlength="100" placeholder="${k < 2 ? 'Option' : 'Option (optional)'}" value="${esc(a)}" aria-label="Option ${L[k]}"></div>`).join('')}
+          </div>
+          ${switchRow('other', q.other, 'Add “Other”', `Players can type their own answer (up to ${OTHER_MAX} characters); you see them all`)}`,
+        scale: () => `
+          <div class="seg scale-mode" role="group" aria-label="Kind of scale">
+            <button type="button" data-act="mode" data-mode="likert" class="${q.mode === 'nps' ? '' : 'on'}" aria-pressed="${q.mode !== 'nps'}">Agree / disagree</button>
+            <button type="button" data-act="mode" data-mode="nps" class="${q.mode === 'nps' ? 'on' : ''}" aria-pressed="${q.mode === 'nps'}">NPS 0–10</button>
+          </div>
+          ${q.mode === 'nps' ? `
+            <div class="nps-preview" aria-hidden="true">${Array.from({ length: 11 }, (_, k) => `<span class="${k <= 6 ? 'det' : k <= 8 ? 'pas' : 'pro'}">${k}</span>`).join('')}</div>
+            <div class="scale-edit two">
+              ${q.ends.map((l, k) => `<label><small>${k ? '10 means' : '0 means'}</small>
+                <input data-f="end" data-k="${k}" maxlength="40" value="${esc(l)}" placeholder="${esc(NPS_ENDS[k])}"></label>`).join('')}
+            </div>
+            <p class="hint">Players pick 0–10. You get the Net Promoter Score: % who pick 9–10 minus % who pick 0–6.</p>`
+          : `<ol class="scale-edit">
+              ${q.labels.map((l, k) => `<li class="sc${k}"><b>${k + 1}</b><input data-f="label" data-k="${k}" maxlength="40" value="${esc(l)}" placeholder="${esc(LIKERT[k])}" aria-label="Point ${k + 1} of 5"></li>`).join('')}
+            </ol>
+            <p class="hint">Five points; change any label (e.g. “Never … Always”). You see how many picked each and the average.</p>`}`,
+        drop: () => `<p class="hint">Everyone drops one pin on the picture. You see all the pins together${q.image ? '' : ' (add a picture above)'}.</p>`,
+        cloud: () => `<div class="typebox ghosted" aria-hidden="true">${CLOUD_ICON}<span>A word or short phrase<i class="caret"></i></span></div>
+          <p class="hint">Each player sends one answer (up to ${CLOUD_MAX} characters). The more people say it, the bigger it grows.</p>`,
+        open: () => `<div class="typebox ghosted tall" aria-hidden="true">${OPEN_ICON}<span>Players write here…<i class="caret"></i></span></div>
+          <p class="hint">Each player writes up to ${OPEN_MAX} characters. You see every answer as a card.</p>`,
+        brain: () => `<ol class="brain-steps">
+            <li><b>1</b><span><strong>Ideas.</strong> Everyone adds up to 3 ideas (${IDEA_MAX} characters each).</span></li>
+            <li><b>2</b><span><strong>Group.</strong> On your screen, drop similar ideas onto each other.</span></li>
+            <li><b>3</b><span><strong>Vote.</strong> Everyone picks up to 3 favourites (30 seconds).</span></li>
+          </ol>`,
+      }[q.type]();
+      return `${body}${named}`;
+    }
+    // "Names on answers" for opinion questions: shown only when the quiz has some.
+    function drawAnon() {
+      const box = $('#anonBox');
+      const any = d.questions.some((q) => isOpinion(q.type));
+      box.hidden = !any;
+      if (!any) return;
+      const from = thumbAt(box.querySelector('.seg'));
+      box.innerHTML = `
+        <span class="eyebrow">Names on opinion answers</span>
+        <div class="seg" role="group" aria-label="Names on opinion answers">
+          ${ANON_MODES.map(([m, label]) => `<button type="button" data-anon="${m}" class="${d.anonMode === m ? 'on' : ''}" aria-pressed="${d.anonMode === m}">${label}</button>`).join('')}
+        </div>
+        <p class="hint">${{ named: 'You see who answered each opinion question.', anon: 'You see what people answered, never who. Players are told it’s anonymous.',
+          mixed: 'Choose on each opinion question whether names are shown.' }[d.anonMode]} Quiz questions always show names on the leaderboard.</p>`;
+      placeThumb(box.querySelector('.seg'), from);
+    }
+
     // One row in a settings list: label on the left, value and › on the right; tapping opens a picker.
     function setRow(field, label, value, cls = '') {
       return `<button class="set-row ${cls}" data-pick="${field}" aria-haspopup="dialog" aria-expanded="false">
@@ -1648,7 +1850,14 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       closePicker(false);
       list.innerHTML = d.questions.map(card).join('');
       list.querySelectorAll('.seg').forEach((seg) => placeThumb(seg));
+      drawAnon();
     };
+    $('#anonBox').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-anon]');
+      if (!b || d.anonMode === b.dataset.anon) return;
+      d.anonMode = b.dataset.anon;
+      save(); draw();
+    });
     document.fonts?.ready.then(() => list.querySelectorAll('.seg').forEach((seg) => placeThumb(seg)));
     draw();
 
@@ -1692,11 +1901,17 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       if (f === 'title') q.title = e.target.value;
       else if (f === 'answer') q.answers[+e.target.dataset.k] = e.target.value;
       else if (f === 'accepted') q.accepted[+e.target.dataset.k] = e.target.value;
+      else if (f === 'label') q.labels[+e.target.dataset.k] = e.target.value;
+      else if (f === 'end') q.ends[+e.target.dataset.k] = e.target.value;
       else if (f === 'correct') q.correct = +e.target.value;
+      else return;   // switches are handled on change
       save();
     });
     list.addEventListener('change', (e) => {
-      if (e.target.type === 'file') setImage(qOf(e.target), e.target.files[0]);
+      if (e.target.type === 'file') return setImage(qOf(e.target), e.target.files[0]);
+      const f = e.target.dataset.f;
+      if (f === 'other') { qOf(e.target).other = e.target.checked; save(); }
+      if (f === 'named') { qOf(e.target).anon = !e.target.checked; save(); }
     });
     list.addEventListener('click', (e) => {
       const pickBtn = e.target.closest('[data-pick]');
@@ -1710,6 +1925,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
           return openPicker(pickBtn, { title: 'Question type', kind: 'choices', value: q.type, options: TYPES, onChange: (v) => {
             if (q.type === v) return;
             q.type = v;
+            if ((v === 'open' || v === 'brain') && q.time < 60) q.time = 60;   // writing takes longer
             if (v === 'tf' && q.correct > 1) q.correct = 0;
             q.accepted = q.accepted || ['', '', '', ''];
             save(); draw();
@@ -1749,6 +1965,12 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
         save(); draw();
         const seg = list.querySelector(`[data-q="${i}"] .seg`);
         if (seg && from) placeThumb(seg, from);
+        return;
+      }
+      if (act === 'mode') {
+        if (q.mode === t.dataset.mode) return;
+        q.mode = t.dataset.mode;
+        save(); draw();
         return;
       }
       if (act === 'rdel') q.regions.splice(+t.dataset.r, 1);
@@ -1988,7 +2210,10 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           : q.type === 'type' ? q.accepted.filter(Boolean).map((a, k) => `<span class="ia ${k ? '' : 'ok'}">${k ? '' : '✓ '}${esc(a)}</span>`).join('')
           : q.type === 'slider' ? `<span class="ia ok">✓ ${esc(withUnit(q.answer, q.unit))}</span><span class="ia">${esc(withUnit(q.min, q.unit))} – ${esc(withUnit(q.max, q.unit))}</span>`
           : q.type === 'puzzle' ? q.answers.filter(Boolean).map((a, k) => `<span class="ia">${k + 1}. ${esc(a)}</span>`).join('')
-          : q.type === 'pin' ? `<span class="ia ok">${q.regions.length} area${q.regions.length === 1 ? '' : 's'}</span>${q.penalty ? `<span class="ia">Stray pins −${fmt(q.penalty)}</span>` : ''}` : '';
+          : q.type === 'pin' ? `<span class="ia ok">${q.regions.length} area${q.regions.length === 1 ? '' : 's'}</span>${q.penalty ? `<span class="ia">Stray pins −${fmt(q.penalty)}</span>` : ''}`
+          : q.type === 'poll' ? q.answers.filter(Boolean).map((a) => `<span class="ia">${esc(a)}</span>`).join('') + (q.other ? '<span class="ia">+ Other</span>' : '')
+          : q.type === 'scale' ? (q.mode === 'nps' ? `<span class="ia">NPS 0–10</span>` : q.labels.map((l) => `<span class="ia">${esc(l)}</span>`).join(''))
+          : isOpinion(q.type) ? `<span class="ia">No points${q.anon ? ' · anonymous' : ''}</span>` : '';
         $s('#impOut').innerHTML = !r || (!r.questions.length && !r.errors.length && !r.skipped.length) ? (files.length || pasted.trim() ? '<p class="hint">No questions found yet. Check “How to write them”.</p>' : '') : `
           ${r.errors.map((e) => `<p class="imp-err">${esc(e)}</p>`).join('')}
           ${r.questions.length ? `<p class="eyebrow imp-found">Found ${r.questions.length} question${r.questions.length === 1 ? '' : 's'}${r.pics.length ? ` · ${r.questions.filter((q) => q.pic).length} with pictures` : ''}${r.cover ? ' · an intro picture' : ''}</p>` : ''}
@@ -2032,6 +2257,9 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           if (q.type === 'puzzle') Object.assign(base, { answers: q.answers });
           if (q.type === 'slider') Object.assign(base, { min: q.min, max: q.max, step: q.step, answer: q.answer, unit: q.unit, margin: q.margin });
           if (q.type === 'pin') Object.assign(base, { regions: q.regions, penalty: q.penalty || 0 });
+          if (isOpinion(q.type)) base.anon = !!q.anon;
+          if (q.type === 'poll') Object.assign(base, { answers: q.answers, other: !!q.other });
+          if (q.type === 'scale') Object.assign(base, { mode: q.mode || 'likert', labels: q.labels || [...LIKERT], ends: q.ends || [...NPS_ENDS] });
           made.push(base);
         }
         // An untouched blank first question is replaced instead of left above the imports.
@@ -2039,6 +2267,11 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
         if (d.questions.length === 1 && empty(d.questions[0])) d.questions = [];
         const first = d.questions.length;
         d.questions.push(...made);
+        // Anonymous opinion questions came in: pick the names setting that keeps them anonymous.
+        if (made.some((q) => isOpinion(q.type) && q.anon) && d.anonMode !== 'anon') {
+          const ops = d.questions.filter((q) => isOpinion(q.type));
+          d.anonMode = ops.every((q) => q.anon) ? 'anon' : 'mixed';
+        }
         if (!d.title.trim() && r.title) { d.title = r.title.slice(0, 120); $('#title').value = d.title; }
         if (!d.cover && r.cover) { const c = await picOf(r.cover); if (c) { d.cover = c; drawCover(); } }
         save(); draw();
@@ -2063,6 +2296,19 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
       for (const [i, q] of d.questions.entries()) {
         const n = i + 1;
         if (!q.title.trim()) return toast(`Question ${n} needs a title`);
+        if (isOpinion(q.type)) {
+          const base = { type: q.type, title: q.title.trim(), image: q.image, time: q.time,
+            anon: d.anonMode === 'anon' || (d.anonMode === 'mixed' && q.anon) };
+          if (q.type === 'poll') {
+            const opts = q.answers.map((a) => a.trim()).filter(Boolean);
+            if (opts.length < 2) return toast(`Question ${n}: a poll needs at least 2 options`);
+            Object.assign(base, { answers: opts, other: !!q.other });
+          }
+          if (q.type === 'scale') Object.assign(base, { mode: q.mode, labels: (q.mode === 'nps' ? q.ends : q.labels).map((l) => l.trim()) });
+          if (q.type === 'drop' && !q.image) return toast(`Question ${n} needs a picture to drop pins on`);
+          payload.questions.push(base);
+          continue;
+        }
         if (q.type === 'pin') {
           if (!q.image) return toast(`Question ${n} needs a picture to pin on`);
           if (!q.regions?.length) return toast(`Question ${n}: drag on the picture to mark the right area`);
@@ -2167,6 +2413,20 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
       } catch (err) { toast(err.message); }
     }
 
+    // An opinion question in the host's preview: what players will see, and what you'll get back.
+    function previewOpinion(q) {
+      const img = q.image && q.type !== 'drop' ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : '';
+      if (q.type === 'poll') return `${img}${tiles(q.answers, () => ({ cls: 'soft' }))}<p class="hint">A poll: no right answer, no points.${q.other ? ' Players can also type their own “Other” answer.' : ''}</p>`;
+      if (q.type === 'scale') return `${img}${q.mode === 'nps'
+        ? `<div class="nps-preview" aria-hidden="true">${Array.from({ length: 11 }, (_, k) => `<span class="${k <= 6 ? 'det' : k <= 8 ? 'pas' : 'pro'}">${k}</span>`).join('')}</div>
+           <div class="nps-ends"><span>${esc(q.labels[0])}</span><span>${esc(q.labels[1])}</span></div><p class="hint">NPS: you get the score, the spread and the average.</p>`
+        : `<div class="scale-pick static">${q.labels.map((l, k) => `<div class="sc${k}"><b>${k + 1}</b><span>${esc(l)}</span></div>`).join('')}</div><p class="hint">You get how many picked each point, and the average.</p>`}`;
+      if (q.type === 'drop') return `${pinBox(q.image)}<p class="hint">Everyone drops one pin; you see them all together.</p>`;
+      return `${img}<p class="hint">${{ cloud: `One word or short phrase each (${CLOUD_MAX} characters), shown as a word cloud.`,
+        open: `Written answers of up to ${OPEN_MAX} characters, shown as cards.`,
+        brain: 'Everyone adds up to 3 ideas; you group similar ones; then everyone votes for up to 3 favourites.' }[q.type]}</p>`;
+    }
+
     function preview() {
       viewKey = 'preview';
       const n = quiz.questions.length;
@@ -2194,9 +2454,9 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           ${quiz.questions.map((q, i) => `
             <section class="card pcard">
               <header><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="grow"></span>
-                <span class="pill dim">${TYPE_LABEL[q.type] || 'Quiz'}</span><span class="pill">${q.time}s</span></header>
+                <span class="pill dim">${TYPE_LABEL[q.type] || 'Quiz'}</span>${isOpinion(q.type) && q.anon ? '<span class="pill dim">🔒 Anonymous</span>' : ''}<span class="pill">${q.time}s</span></header>
               <h2>${esc(q.title)}</h2>
-              ${q.type === 'pin'
+              ${isOpinion(q.type) ? previewOpinion(q) : q.type === 'pin'
                 ? `${pinBox(q.image, q.regions.map((r) => regionEl(r)).join(''))}<p class="hint">${q.regions.length > 1
                   ? `Players drop up to ${q.regions.length} pins. A pin in every area scores full points; each area found earns its share.`
                   : 'Pins inside the highlighted area score.'}${q.penalty ? ` Pins outside cost ${fmt(q.penalty)} points each.` : ''}</p>`
@@ -2225,11 +2485,14 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
       if (!alive) return;
       s.token = session.token;
       if (s.phase === 'question') setDeadline(s);
-      const key2 = `host:${s.phase}:${s.qIndex}`;
+      if (s.phase === 'vote') setDeadline({ ...s, question: { ...s.question, time: s.question.voteTime } });
+      // (brainstorm grouping redraws when the ideas change)
+      const key2 = `host:${s.phase}:${s.qIndex}:${s.phase === 'ideas' ? s.ideas.map((x) => `${x.id}.${x.n}`).join(',') : ''}`;
 
       if (key2 === viewKey) {                       // same screen: patch the live bits only
         if (s.phase === 'lobby') lobbyBits(s);
         if (s.phase === 'question') $('#answered').textContent = `${s.answered} / ${s.count} answered`;
+        if (s.phase === 'vote') $('#answered').textContent = `${s.answered} / ${s.count} voted`;
         return;
       }
       viewKey = key2;
@@ -2274,6 +2537,119 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
         $('#close').onclick = () => act(s, 'end');
         $('#next').onclick = (e) => act(s, 'next', e.currentTarget);
         lobbyBits(s);
+        return;
+      }
+
+      // ---- opinion questions ----
+      const oq = s.question;
+      if (oq && isOpinion(oq.type) && ['question', 'reveal', 'ideas', 'vote'].includes(s.phase)) {
+        const reveal = s.phase === 'reveal';
+        const last = s.qIndex + 1 === s.total;
+        const timed = s.phase === 'question' || s.phase === 'vote';
+        const nextLabel = s.phase === 'ideas' ? (s.ideas.length > 1 ? 'Start voting' : 'Show results')
+          : s.phase === 'vote' ? 'Show results'
+          : reveal ? (last ? (s.form ? 'Finish' : 'Show podium') : 'Next question')
+          : oq.type === 'brain' ? 'Stop ideas' : 'Skip';
+        const tag = `<p class="op-tag"><span>${TYPE_LABEL[oq.type]}</span>${oq.anon ? '<span class="anon">🔒 Anonymous</span>' : ''}</p>`;
+        const ghost = (icon, text) => `<div class="typebox ghosted" aria-hidden="true">${icon}<span>${text}<i class="caret"></i></span></div>`;
+        let visual = '';
+        if (s.phase === 'ideas') {
+          visual = `<p class="hint center">${s.ideas.length > 1 ? 'Tap an idea, then tap a similar one to group them. Then start the vote.' : 'Not enough ideas to vote on.'}</p>
+            <div class="idea-wall" id="ideaWall">${s.ideas.map((x) => `<button class="idea-card" data-id="${x.id}">
+              <strong>${esc(x.text)}</strong>${x.n > 1 ? `<em>×${x.n}</em>` : ''}
+              ${x.members.length > 1 ? `<small>${x.members.filter((m) => m !== x.text).map(esc).join(' · ')}</small>` : ''}</button>`).join('')}</div>`;
+        } else if (s.phase === 'vote') {
+          visual = `<ul class="idea-wall static">${s.ideas.map((x) => `<li class="idea-card"><strong>${esc(x.text)}</strong>${x.n > 1 ? `<em>×${x.n}</em>` : ''}</li>`).join('')}</ul>`;
+        } else if (reveal) {
+          visual = `${oq.image && oq.type !== 'drop' ? `<img class="qimg small" src="${oq.image}" alt="" decoding="async">` : ''}${opinionView(oq, s.results, { host: true })}`;
+        } else {
+          visual = oq.type === 'drop' ? pinBox(oq.image)
+            : `${oq.image ? `<img class="qimg" src="${oq.image}" alt="" decoding="async">` : ''}${
+              oq.type === 'poll' ? `${tiles(oq.answers)}${oq.other ? '<p class="pinstat">Players can also type their own “Other” answer</p>' : ''}`
+              : oq.type === 'scale' ? (oq.mode === 'nps'
+                ? `<div class="nps-preview big" aria-hidden="true">${Array.from({ length: 11 }, (_, k) => `<span class="${k <= 6 ? 'det' : k <= 8 ? 'pas' : 'pro'}">${k}</span>`).join('')}</div>
+                   <div class="nps-ends"><span>${esc(oq.labels[0])}</span><span>${esc(oq.labels[1])}</span></div>`
+                : `<div class="scale-pick static">${oq.labels.map((l, k) => `<div class="sc${k}"><b>${k + 1}</b><span>${esc(l)}</span></div>`).join('')}</div>`)
+              : oq.type === 'cloud' ? ghost(CLOUD_ICON, 'A word or short phrase')
+              : oq.type === 'open' ? ghost(OPEN_ICON, 'Players are writing…')
+              : ghost(IDEA_ICON, `Up to ${oq.ideasMax} ideas each`)}`;
+        }
+        // Who said what (open answers already carry names on their cards).
+        const named = reveal && s.replies?.length && oq.type !== 'open' ? `
+          <section class="card replies">
+            <div class="replies-head"><p class="eyebrow">Who said what</p></div>
+            <ul class="rlist">${s.replies.map((r, k) => `
+              <li class="${r.choice === null ? 'none' : 'op'}" style="--i:${Math.min(k, 12)}">
+                <span class="r-art">${avatar(r.look || r.name)}</span>
+                <span class="r-main"><strong>${esc(r.name)}</strong><small>${esc(answerWords(oq, r.choice) || 'No answer')}</small></span>
+              </li>`).join('')}</ul>
+          </section>` : reveal && oq.anon ? '<p class="anon-note center">🔒 Anonymous question: names aren’t shown.</p>' : '';
+        app.innerHTML = `
+          <main class="page stage op-stage ${reveal ? 'is-reveal' : ''} ${oq.type === 'drop' ? 'pinq' : ''}">
+            <div class="timerbar"><i data-bar ${timed ? '' : 'style="transform:scaleX(0)"'}></i></div>
+            <header class="bar">
+              <span class="pill">${s.qIndex + 1} / ${s.total}</span>
+              <span class="pill dim">PIN ${pinText(s.pin)}</span>
+              <span class="grow"></span>
+              ${timed ? `<span class="pill" id="answered">${s.answered} / ${s.count} ${s.phase === 'vote' ? 'voted' : 'answered'}</span>` : ''}
+              ${s.phase === 'ideas' ? `<span class="pill">${s.ideas.length} idea${s.ideas.length === 1 ? '' : 's'}</span>` : ''}
+              <button class="btn ${timed && s.phase !== 'vote' ? '' : 'primary'} small" id="next">${nextLabel}${timed && s.phase === 'question' && oq.type !== 'brain' ? '' : ' →'}</button>
+            </header>
+            <section class="qwrap">
+              <div class="qmain">
+                <h1 class="qtitle">${s.phase === 'vote' ? `Vote: ${esc(oq.title)}` : esc(oq.title)}</h1>
+                ${tag}
+                ${visual}
+              </div>
+              ${timed ? '<div class="clock"><span data-secs></span></div>' : ''}
+            </section>
+            ${named}
+          </main>`;
+        $('#next').onclick = (e) => act(s, 'next', e.currentTarget);
+        // Brainstorm grouping: tap one idea, then a similar one, and the second joins the first.
+        const wall = $('#ideaWall');
+        if (wall) {
+          let picked = null;
+          wall.onclick = (e) => {
+            const b = e.target.closest('.idea-card');
+            if (!b) return;
+            const id = +b.dataset.id;
+            if (picked === null || picked === id) {
+              picked = picked === id ? null : id;
+              wall.querySelectorAll('.idea-card').forEach((x) => x.classList.toggle('sel', +x.dataset.id === picked));
+              wall.classList.toggle('picking', picked !== null);
+              buzz(6);
+              return;
+            }
+            const a = picked;
+            picked = null;
+            b.classList.add('merging');
+            buzz(10);
+            send({ pin: s.pin, token: s.token, action: 'group', a, b: id }, stop).catch((err) => toast(err.message));
+          };
+        }
+        return;
+      }
+
+      if (s.phase === 'final' && s.form) {
+        const n = s.responses?.length || 0;
+        app.innerHTML = `
+          <main class="page final">
+            ${nav(`<span class="pill">${esc(s.quizTitle)}</span>`)}
+            <section class="final-head">
+              <p class="eyebrow">All done</p>
+              <h1 class="display">Thanks, <em>everyone.</em></h1>
+              <p class="lede">${s.count} ${s.count === 1 ? 'person' : 'people'} answered ${n} question${n === 1 ? '' : 's'}. Download every response as a spreadsheet.</p>
+            </section>
+            <div class="crowd done-crowd">${s.players.slice(0, 24).map((p) => buddy(p.name, p.look)).join('')}</div>
+            <div class="cta end">
+              <button class="btn primary" id="dlResp">Download responses</button>
+              <button class="btn" id="again">Run it again</button>
+              <a class="btn" href="/" data-link>Done</a>
+            </div>
+          </main>`;
+        $('#dlResp').onclick = () => downloadResponses(s.quizTitle, s.responses || []);
+        $('#again').onclick = async () => { await act(s, 'end'); store.del(sessionKey); openLobby(); };
         return;
       }
 
@@ -2360,10 +2736,12 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
             <li><span class="rank">${i + 4}</span><span class="name">${esc(p.name)}</span><span class="score">${fmt(p.score)}</span></li>`).join('')}</ol>` : ''}
           <div class="cta end">
             <button class="btn primary" id="again">Play again</button>
+            ${s.responses?.length ? '<button class="btn" id="dlResp">Download responses</button>' : ''}
             <a class="btn" href="/leaderboard" data-link>Leaderboard</a>
             <a class="btn" href="/" data-link>Done</a>
           </div>
         </main>`;
+      $('#dlResp')?.addEventListener('click', () => downloadResponses(s.quizTitle, s.responses || []));
       $('#again').onclick = async () => { await act(s, 'end'); store.del(sessionKey); openLobby(); };
     }
 
@@ -2453,14 +2831,15 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
     function renderPlayer(s, session) {
       if (!alive) return;
       if (s.phase === 'question') setDeadline(s);
-      const key = `play:${s.phase}:${s.qIndex}:${s.choice}:${s.phase === 'lobby' ? s.look : ''}`;
+      if (s.phase === 'vote') setDeadline({ ...s, question: { ...s.question, time: s.question.voteTime } });
+      const key = `play:${s.phase}:${s.qIndex}:${JSON.stringify(s.choice)}:${s.phase === 'lobby' ? s.look : ''}:${s.phase === 'vote' ? !!s.vote : ''}`;
       if (key === viewKey) {   // same screen: just keep the lobby head-count fresh
         const wc = $('#wcount');
         if (wc && wc.textContent !== waitCount(s.count)) { wc.textContent = waitCount(s.count); bump(wc); }
         return;
       }
       viewKey = key;
-      const me = `<span class="pill">${esc(s.name)}</span><span class="pill score-pill">${fmt(s.score)}</span>`;
+      const me = `<span class="pill">${esc(s.name)}</span>${s.form ? '' : `<span class="pill score-pill">${fmt(s.score)}</span>`}`;   // forms have no points
       const centered = (inner) => { app.innerHTML = `<main class="page center">${nav(me)}<div class="solo">${inner}</div></main>`; };
 
       if (s.phase === 'lobby') {
@@ -2628,6 +3007,235 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
               <span class="grow"></span>
               <span class="pill timer"><span data-secs></span>s</span>
             </header>`;
+
+      // ---- opinion questions ----
+      const q0 = s.question;
+      const op = q0 && isOpinion(q0.type);
+      const anonChip = op ? `<p class="anon-chip ${q0.anon ? 'is-anon' : ''}">${q0.anon ? '🔒 Anonymous — the host won’t see your name' : '👤 Your name is shown with your answer'}</p>` : '';
+      const opHead = (cls, extra = '') => `
+          <main class="page stage player ${cls}">
+            ${playerHead(q0)}
+            <section class="qwrap"><div class="qmain">
+              <h1 class="qtitle">${esc(q0.title)}</h1>${anonChip}
+              ${q0.image && q0.type !== 'drop' ? `<img class="qimg" src="${q0.image}" alt="" decoding="async">` : ''}${extra}`;
+      const sendAnswer = (choice, undo) => send({ pin: session.pin, player: session.player, action: 'answer', choice }, stop)
+        .catch((err) => { toast(err.message); undo?.(); });
+
+      if (op && s.phase === 'question' && s.choice === null && q0.type === 'poll') {
+        app.innerHTML = `${opHead('pollq')}</div></section>
+            ${tiles(q0.answers, () => ({ button: true }))}
+            ${q0.other ? `<form class="other-box" id="otherForm" autocomplete="off">
+              <input id="otherIn" maxlength="${OTHER_MAX}" placeholder="Other… type your own" aria-label="Other answer" enterkeyhint="send">
+              <button class="btn primary small" disabled>Send</button></form>` : ''}
+          </main>`;
+        $('.tiles').onclick = (e) => {
+          const t = e.target.closest('[data-choice]');
+          if (!t) return;
+          document.querySelectorAll('.tile').forEach((el) => { el.disabled = true; el.classList.toggle('dimmed', el !== t); });
+          buzz(12);
+          sendAnswer(+t.dataset.choice, () => document.querySelectorAll('.tiles .tile').forEach((el) => { el.disabled = false; el.classList.remove('dimmed'); }));
+        };
+        const of = $('#otherForm');
+        if (of) {
+          const inp = $('#otherIn'), btn = of.querySelector('button');
+          inp.oninput = () => { btn.disabled = !inp.value.trim(); };
+          of.onsubmit = (e) => {
+            e.preventDefault();
+            if (!inp.value.trim() || btn.disabled) return;
+            btn.disabled = true; inp.disabled = true; buzz(12);
+            sendAnswer(inp.value.trim(), () => { inp.disabled = false; btn.disabled = false; });
+          };
+        }
+        return;
+      }
+
+      if (op && s.phase === 'question' && s.choice === null && q0.type === 'scale') {
+        const nps = q0.mode === 'nps';
+        app.innerHTML = `${opHead('scaleq')}
+              ${nps ? `<div class="nps-pick">${Array.from({ length: 11 }, (_, k) => `<button class="${k <= 6 ? 'det' : k <= 8 ? 'pas' : 'pro'}" data-v="${k}" aria-label="${k}">${k}</button>`).join('')}</div>
+                <div class="nps-ends"><span>${esc(q0.labels[0])}</span><span>${esc(q0.labels[1])}</span></div>`
+              : `<div class="scale-pick">${q0.labels.map((l, k) => `<button class="sc${k}" data-v="${k}"><b>${k + 1}</b><span>${esc(l)}</span></button>`).join('')}</div>`}
+            </div></section>
+          </main>`;
+        const box = $('.nps-pick, .scale-pick');
+        box.onclick = (e) => {
+          const b = e.target.closest('[data-v]');
+          if (!b) return;
+          box.querySelectorAll('button').forEach((x) => { x.disabled = true; x.classList.toggle('dimmed', x !== b); });
+          buzz(12);
+          sendAnswer(+b.dataset.v, () => box.querySelectorAll('button').forEach((x) => { x.disabled = false; x.classList.remove('dimmed'); }));
+        };
+        return;
+      }
+
+      if (op && s.phase === 'question' && s.choice === null && q0.type === 'drop') {
+        app.innerHTML = `${opHead('pinq dropq', pinBox(q0.image, '', 'tap'))}
+              <p class="hint" id="pinhint">Tap the picture to drop your pin. Tap again to move it.</p>
+            </div></section>
+            <div class="lockbar"><button class="btn primary" id="lock" disabled>Lock in pin →</button></div>
+          </main>`;
+        const box = $('.pinbox');
+        let at = Array.isArray(s.draft) ? { x: s.draft[0], y: s.draft[1] } : null;
+        let draftT = 0;
+        const paint = () => {
+          box.querySelectorAll('.marker').forEach((m) => m.remove());
+          if (at) box.insertAdjacentHTML('beforeend', marker(at.x, at.y, 'drop-in'));
+          $('#lock').disabled = !at;
+        };
+        box.onpointerdown = (e) => {
+          if (box.classList.contains('locked')) return;
+          e.preventDefault();
+          const [x, y] = fracAt(box, e);
+          at = { x: r4(x), y: r4(y) };
+          buzz(8); paint();
+          clearTimeout(draftT);   // saved as you go: it counts when time's up even without locking in
+          draftT = setTimeout(() => api('/api/act', { pin: session.pin, player: session.player, action: 'draft', choice: at }).catch(() => {}), 250);
+        };
+        paint();
+        $('#lock').onclick = () => {
+          if (!at) return;
+          clearTimeout(draftT);
+          $('#lock').disabled = true; box.classList.add('locked'); buzz(12);
+          sendAnswer(at, () => { if ($('#lock')) $('#lock').disabled = false; box.classList.remove('locked'); });
+        };
+        return;
+      }
+
+      if (op && s.phase === 'question' && s.choice === null && (q0.type === 'cloud' || q0.type === 'open')) {
+        const open = q0.type === 'open', max = open ? OPEN_MAX : CLOUD_MAX;
+        app.innerHTML = `${opHead(open ? 'openq' : 'cloudq')}
+              <form class="typebox ${open ? 'tall' : ''}" id="typeform" autocomplete="off">
+                ${open ? OPEN_ICON : CLOUD_ICON}
+                ${open ? `<textarea id="typed" maxlength="${max}" rows="4" placeholder="Write your answer" aria-label="Your answer"></textarea>`
+                  : `<input id="typed" maxlength="${max}" placeholder="A word or short phrase" aria-label="Your answer" autocapitalize="sentences" enterkeyhint="send">`}
+                <span class="typecount" id="tcount">0/${max}</span>
+              </form>
+            </div></section>
+            <div class="lockbar"><button class="btn primary" id="lock" disabled>Send →</button></div>
+          </main>`;
+        const input = $('#typed');
+        const sync = () => { $('#lock').disabled = !input.value.trim(); $('#tcount').textContent = `${input.value.length}/${max}`; };
+        input.oninput = sync;
+        setTimeout(() => input.focus({ preventScroll: true }), 60);
+        const go = () => {
+          if (!input.value.trim() || $('#lock').disabled) return;
+          $('#lock').disabled = true; input.disabled = true; buzz(12);
+          sendAnswer(input.value.trim(), () => { if (!input.isConnected) return; input.disabled = false; sync(); });
+        };
+        $('#typeform').onsubmit = (e) => { e.preventDefault(); go(); };
+        if (open) input.onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } };
+        $('#lock').onclick = go;
+        return;
+      }
+
+      if (op && s.phase === 'question' && q0.type === 'brain') {
+        const mine = s.choice || [];
+        const full = mine.length >= q0.ideasMax;
+        app.innerHTML = `${opHead('brainq')}
+              <ul class="my-ideas">${mine.map((t, k) => `<li style="--i:${k}">${IDEA_ICON}<span>${esc(t)}</span></li>`).join('')}</ul>
+              ${full ? '<p class="lede">That’s all 3 ideas in. Nice!</p>' : `
+              <form class="typebox" id="ideaform" autocomplete="off">
+                ${IDEA_ICON}
+                <input id="idea" maxlength="${IDEA_MAX}" placeholder="${mine.length ? 'Another idea?' : 'Your idea'}" aria-label="Your idea" autocapitalize="sentences" enterkeyhint="send">
+                <span class="typecount" id="tcount">0/${IDEA_MAX}</span>
+              </form>
+              <p class="hint">${mine.length} of ${q0.ideasMax} ideas. Next, the host groups them and everyone votes.</p>`}
+            </div></section>
+            ${full ? '' : '<div class="lockbar"><button class="btn primary" id="lock" disabled>Add idea →</button></div>'}
+          </main>`;
+        if (full) return;
+        const input = $('#idea');
+        const sync = () => { $('#lock').disabled = !input.value.trim(); $('#tcount').textContent = `${input.value.length}/${IDEA_MAX}`; };
+        input.oninput = sync;
+        setTimeout(() => input.focus({ preventScroll: true }), 60);
+        const go = () => {
+          if (!input.value.trim() || $('#lock').disabled) return;
+          $('#lock').disabled = true; input.disabled = true; buzz(10);
+          sendAnswer(input.value.trim(), () => { if (!input.isConnected) return; input.disabled = false; sync(); });
+        };
+        $('#ideaform').onsubmit = (e) => { e.preventDefault(); go(); };
+        $('#lock').onclick = go;
+        return;
+      }
+
+      if (s.phase === 'ideas') {
+        return centered(`<div class="avatar icon-avatar">${IDEA_ICON}</div>
+          <h1 class="display">${s.ideas.length} idea${s.ideas.length === 1 ? '' : 's'} <em>in.</em></h1>
+          ${waitingChip('The host is grouping similar ideas')}
+          <p class="lede">Voting starts next: pick your favourites.</p>`);
+      }
+
+      if (s.phase === 'vote' && !s.vote) {
+        const max = q0.votesMax;
+        const picked = new Set();
+        app.innerHTML = `
+          <main class="page stage player voteq">
+            ${playerHead(q0)}
+            <section class="qwrap"><div class="qmain">
+              <h1 class="qtitle">Vote for your favourites</h1>
+              <p class="hint center">${esc(q0.title)} · pick up to ${max}</p>
+              <div class="vote-list">${s.ideas.map((x) => `<button class="vote-idea" data-id="${x.id}" aria-pressed="false">
+                <span>${esc(x.text)}${x.members.length > 1 ? `<small>${x.members.filter((m) => m !== x.text).map(esc).join(' · ')}</small>` : ''}</span><i>✓</i></button>`).join('')}</div>
+            </div></section>
+            <div class="lockbar"><button class="btn primary" id="lock" disabled>Vote →</button></div>
+          </main>`;
+        const paint = () => {
+          document.querySelectorAll('.vote-idea').forEach((b) => {
+            const on = picked.has(+b.dataset.id);
+            b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+            b.disabled = !on && picked.size >= max;
+          });
+          $('#lock').disabled = !picked.size;
+          $('#lock').textContent = picked.size ? `Vote for ${picked.size} →` : 'Vote →';
+        };
+        $('.vote-list').onclick = (e) => {
+          const b = e.target.closest('.vote-idea');
+          if (!b) return;
+          const id = +b.dataset.id;
+          if (picked.has(id)) picked.delete(id); else if (picked.size < max) picked.add(id);
+          buzz(8); paint();
+        };
+        $('#lock').onclick = () => {
+          if (!picked.size) return;
+          $('#lock').disabled = true; buzz(12);
+          document.querySelectorAll('.vote-idea').forEach((b) => { b.disabled = true; });
+          sendAnswer([...picked], paint);
+        };
+        return;
+      }
+      if (s.phase === 'vote') {
+        return centered(`<div class="avatar icon-avatar">✓</div><h1 class="display">Votes <em>in.</em></h1>${waitingChip('Waiting for everyone to vote')}`);
+      }
+
+      if (op && s.phase === 'question') {   // answered; waiting for the others
+        return centered(`<div class="avatar icon-avatar">${q0.type === 'cloud' ? CLOUD_ICON : q0.type === 'open' ? OPEN_ICON : '✓'}</div>
+          <h1 class="display">Answer <em>sent.</em></h1>
+          ${q0.type === 'poll' ? `<p class="lede">${typeof s.choice === 'string' ? `“${esc(s.choice)}”` : esc(q0.answers[s.choice])}</p>`
+            : q0.type === 'scale' ? `<p class="lede">${q0.mode === 'nps' ? s.choice : esc(q0.labels[s.choice])}</p>`
+            : q0.type === 'cloud' || q0.type === 'open' ? `<p class="lede">“${esc(s.choice)}”</p>` : ''}
+          ${waitingChip('Waiting for everyone else')}`);
+      }
+
+      if (op && s.phase === 'reveal') {
+        buzz(20);
+        const none = s.choice === null || (Array.isArray(s.choice) && !s.choice.length);
+        return centered(`
+          <div class="verdict sent">${none ? '–' : '✓'}</div>
+          <h1 class="display">${none ? 'Time’s <em>up.</em>' : 'Thanks for <em>sharing.</em>'}</h1>
+          ${q0.type === 'drop' && s.auto ? '<p class="lede-note">Time ran out, so the pin you’d placed counted.</p>' : ''}
+          <div class="op-result">${opinionView(q0, s.results, { mine: s.choice })}</div>
+          ${s.form ? '' : `<p class="standing">${ordinal(s.rank)} of ${s.count} · ${fmt(s.score)} pts</p>`}`);
+      }
+
+      if (s.phase === 'final' && s.form) {
+        buzz(30);
+        return centered(`
+          <div class="final-me">${buddy(s.name, s.look, 'me champ jump')}</div>
+          <p class="eyebrow">All done</p>
+          <h1 class="display">Thanks, <em>${esc(s.name)}.</em></h1>
+          <p class="lede">Your answers are in. The host has them all.</p>
+          <div class="cta end"><a class="btn primary" href="/" data-link>Done</a></div>`);
+      }
 
       if (s.phase === 'question' && s.choice === null && s.question.type === 'type') {
         const q = s.question;

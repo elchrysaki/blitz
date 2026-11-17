@@ -24,7 +24,7 @@ const statsOf = (u) => {
 }; // a quiz nobody has played or edited for 15 days is deleted
 const COVER = 999;         // picture slot for the quiz's intro picture
 const COOKIE = "blitz_uid";
-const TIMES = [10, 20, 30, 60];
+const TIMES = [10, 20, 30, 60, 90, 120];
 const IMG_RE = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$/;
 const KEEP_RE = /^\/api\/quizzes\/([\w-]+)\/image\/(\d+)(?:\?v=\d+)?$/; // "keep the picture you already have"
 const ID_RE = /^[A-Za-z0-9_-]{6,40}$/;
@@ -69,6 +69,24 @@ function cleanQuiz(body, quizId = null, old = null) {
     if (q.type === "pin") {
       if (!image) throw new UserError(`Question ${n} needs a picture to pin on`);
       questions.push({ type: "pin", title: qtitle, regions: cleanRegions(q.regions, n), penalty: PENALTIES.includes(q.penalty) ? q.penalty : 0, time, image: true });
+      images.push(image);
+      return;
+    }
+    if (OPINION.includes(q.type)) {
+      const base = { type: q.type, title: qtitle, time, image: !!image, anon: q.anon === true };
+      if (q.type === "poll") {
+        const answers = (Array.isArray(q.answers) ? q.answers : []).map((a) => text(a).trim().slice(0, 100));
+        if (answers.length < 2 || answers.length > 4 || !answers.every(Boolean)) throw new UserError(`Question ${n}: a poll needs 2 to 4 options`);
+        Object.assign(base, { answers, other: q.other === true });
+      } else if (q.type === "scale") {
+        const mode = q.mode === "nps" ? "nps" : "likert";
+        const defaults = mode === "nps" ? NPS_ENDS : LIKERT;
+        const raw = Array.isArray(q.labels) ? q.labels : [];
+        Object.assign(base, { mode, labels: defaults.map((def, k) => text(raw[k]).trim().slice(0, 40) || def) });
+      } else if (q.type === "drop" && !image) {
+        throw new UserError(`Question ${n} needs a picture to drop pins on`);
+      }
+      questions.push(base);
       images.push(image);
       return;
     }
@@ -234,12 +252,43 @@ const PENALTIES = [0, 100, 250, 500];
 const areasFound = (q, choice) => q.regions.filter((r) => pinsOf(choice).some((pt) => inRegion(r, pt))).length;
 
 function isRight(q, choice) {
-  if (choice === null || choice === undefined) return false;
+  if (choice === null || choice === undefined || isOpinion(q)) return false;
   if (isPin(q)) return areasFound(q, choice) === q.regions.length;
   if (q.type === "slider") return sliderShare(q, choice) > 0;
   if (q.type === "type") return typedRight(q, choice);
   if (q.type === "puzzle") return puzzleRight(q.perm, choice);
   return choice === q.correct;
+}
+
+// ---------- collect opinions ----------
+// Opinion questions have no right answer and score no points: Poll (optionally with "Other", which players
+// type), Scale (agree…disagree with your own labels, or NPS 0–10), Drop pin, Word cloud, Open-ended and
+// Brainstorm (ideas, then the host groups them, then everyone votes). Each can be anonymous: then the host
+// sees what was said but never who said it, live or in the downloaded responses.
+const OPINION = ["poll", "scale", "drop", "cloud", "open", "brain"];
+const isOpinion = (q) => OPINION.includes(q.type);
+const OTHER_MAX = 60, CLOUD_MAX = 25, OPEN_MAX = 250, IDEA_MAX = 75;
+const IDEAS_PER = 3;   // ideas each player may add to a brainstorm
+const VOTES_PER = 3;   // favourite ideas each player may vote for
+const VOTE_TIME = 30;  // seconds to vote
+const LIKERT = ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"];
+const NPS_ENDS = ["Not likely at all", "Extremely likely"];
+const ANSWER_MAX = { cloud: CLOUD_MAX, open: OPEN_MAX, brain: IDEA_MAX };
+const oneLine = (v, max) => String(v).replace(/\s+/g, " ").trim().slice(0, max);
+// Words for a cloud: the same word however it's written counts together; the commonest spelling is shown.
+function tallyWords(list, limit = 60) {
+  const groups = new Map();
+  for (const t of list) {
+    const k = norm(t);
+    if (!k) continue;
+    const g = groups.get(k) || { n: 0, forms: new Map() };
+    g.n++;
+    g.forms.set(t, (g.forms.get(t) || 0) + 1);
+    groups.set(k, g);
+  }
+  return [...groups.values()]
+    .map((g) => ({ text: [...g.forms].sort((a, b) => b[1] - a[1])[0][0], n: g.n }))
+    .sort((a, b) => b.n - a.n || a.text.localeCompare(b.text)).slice(0, limit);
 }
 
 // ?v= changes on every edit, so browsers never show a stale cached picture.
@@ -498,7 +547,7 @@ async function updateQuiz(env, uid, id, body) {
 // A public quiz can be found by anyone on Explore, previewed (without its answers) and saved: saving makes
 // a copy that belongs to whoever saved it, pictures included, so the quiz lives on even after its maker
 // deletes it or their browser is forgotten. Each save also counts as activity for the original.
-const typeOfQ = (q) => (["tf", "slider", "type", "puzzle"].includes(q.type) ? q.type : isPin(q) ? "pin" : "quiz");
+const typeOfQ = (q) => (["tf", "slider", "type", "puzzle", ...OPINION].includes(q.type) ? q.type : isPin(q) ? "pin" : "quiz");
 const publicCard = (r, uid) => {
   const qs = JSON.parse(r.questions);
   const first = qs.findIndex((q) => q.image);
@@ -699,8 +748,11 @@ export class GameRoom extends DurableObject {
     this.subs = new Set();  // open event streams: {pid (null = host), writer}
     this.ping = null;
     this.v = Date.now();     // state version: screens ignore anything older than what they have
+    this.log = [];          // per question: every reply, kept for the host's responses download
     ctx.blockConcurrencyWhile(async () => {
       this.s = (await ctx.storage.get("s")) ?? null;
+      // Kept apart from the game (one entry per question), so long answers never crowd its storage.
+      for (const [k, v] of await ctx.storage.list({ prefix: "log:" })) this.log[+k.slice(4)] = v;
     });
   }
 
@@ -709,14 +761,23 @@ export class GameRoom extends DurableObject {
     const s = this.s;
     if (!s) return;
     await this.ctx.storage.put("s", s);
-    const wake = s.phase === "question"
-      ? s.started + s.quiz.questions[s.q].time * 1000 + 400
+    const wake = s.phase === "question" || s.phase === "vote"
+      ? s.started + this.limit() + 400
       : (s.created + GAME_TTL) * 1000;
     await this.ctx.storage.setAlarm(wake);
   }
 
+  // How long the timed part of this screen lasts: the question's time, or the brainstorm vote.
+  limit() {
+    const s = this.s;
+    return s.phase === "vote" ? VOTE_TIME * 1000 : s.quiz.questions[s.q].time * 1000;
+  }
+
   async init(d) {
     if (this.s && this.s.gid !== d.gid) this.closeAll();
+    this.log = [];
+    const old = await this.ctx.storage.list({ prefix: "log:" });
+    if (old.size) await this.ctx.storage.delete([...old.keys()]);
     this.s = { ...d, players: {}, phase: "lobby", q: -1, started: 0 };
     await this.persist();
     return true;
@@ -725,7 +786,10 @@ export class GameRoom extends DurableObject {
   async alarm() {
     const s = this.s;
     if (!s) return;
-    if (s.phase === "question" && Date.now() >= s.started + s.quiz.questions[s.q].time * 1000) return this.reveal();
+    if (s.phase === "question" && Date.now() >= s.started + this.limit()) {
+      return s.quiz.questions[s.q].type === "brain" ? this.toIdeas() : this.reveal();
+    }
+    if (s.phase === "vote" && Date.now() >= s.started + this.limit()) return this.reveal();
     if (Date.now() >= (s.created + GAME_TTL) * 1000) return this.end(s.gid);
     return this.persist(); // woke early: just re-arm
   }
@@ -777,6 +841,11 @@ export class GameRoom extends DurableObject {
       await (body.action === "answer" ? this.answer(s.players[pid], body.choice) : this.draft(s.players[pid], body.choice));
       // The player's screen as it is now, so it can move on without waiting for the stream.
       return { status: 200, body: { ok: true, state: this.s ? this.state(pid) : null } };
+    } else if (body.action === "group") {
+      // Brainstorm: the host drops one idea onto another to group them.
+      if (body.token !== s.token) return { status: 403, body: { error: "Only the host can do that" } };
+      await this.group(body.a, body.b);
+      return { status: 200, body: { ok: true, state: this.state(null) } };
     } else if (body.action === "next" || body.action === "end") {
       if (body.token !== s.token) return { status: 403, body: { error: "Only the host can do that" } };
       if (body.action === "end") await this.end(s.gid);
@@ -795,6 +864,10 @@ export class GameRoom extends DurableObject {
     if (s.phase === "lobby") {
       if (Object.keys(s.players).length) await this.ask(0);
     } else if (s.phase === "question") {
+      await (s.quiz.questions[s.q].type === "brain" ? this.toIdeas() : this.reveal());
+    } else if (s.phase === "ideas") {
+      await this.startVote();
+    } else if (s.phase === "vote") {
       await this.reveal();
     } else if (s.phase === "reveal") {
       if (s.q + 1 < s.quiz.questions.length) {
@@ -810,14 +883,25 @@ export class GameRoom extends DurableObject {
 
   async ask(i) {
     const s = this.s;
-    Object.assign(s, { q: i, phase: "question", started: Date.now() });
-    for (const p of Object.values(s.players)) Object.assign(p, { choice: null, draft: null, auto: false, ms: 0, gained: 0, right: false, found: 0, stray: 0 });
+    Object.assign(s, { q: i, phase: "question", started: Date.now(), ideas: null });
+    for (const p of Object.values(s.players)) Object.assign(p, { choice: null, draft: null, auto: false, ms: 0, gained: 0, right: false, found: 0, stray: 0, vote: null });
     this.push();
     await this.persist();
   }
 
   // Check a reply against the current question; returns it cleaned up, or undefined if it isn't valid.
   cleanChoice(q, choice) {
+    if (q.type === "poll") {
+      if (typeof choice === "string") return q.other ? oneLine(choice, OTHER_MAX) || undefined : undefined;   // "Other: …"
+      return Number.isInteger(choice) && choice >= 0 && choice < q.answers.length ? choice : undefined;
+    }
+    if (q.type === "scale") return Number.isInteger(choice) && choice >= 0 && choice < (q.mode === "nps" ? 11 : 5) ? choice : undefined;
+    if (q.type === "drop") {
+      const c = choice;
+      if (!c || typeof c.x !== "number" || typeof c.y !== "number" || c.x < 0 || c.x > 1 || c.y < 0 || c.y > 1) return;
+      return [round4(c.x), round4(c.y)];
+    }
+    if (ANSWER_MAX[q.type]) return typeof choice === "string" ? oneLine(choice, ANSWER_MAX[q.type]) || undefined : undefined;
     if (isPin(q)) {
       // One pin ({x, y}) or several ([{x, y}, …]), at most one per target area.
       const list = Array.isArray(choice) ? choice : [choice];
@@ -846,7 +930,18 @@ export class GameRoom extends DurableObject {
 
   async answer(p, raw) {
     const s = this.s;
-    if (s.phase !== "question" || p.choice !== null) return;
+    if (s.phase === "vote") return this.vote(p, raw);
+    if (s.phase !== "question") return;
+    if (s.quiz.questions[s.q].type === "brain") {
+      // Brainstorm: each idea is added on its own, up to IDEAS_PER (the same idea twice counts once).
+      const idea = this.cleanChoice(s.quiz.questions[s.q], raw);
+      const list = p.choice || [];
+      if (idea === undefined || list.length >= IDEAS_PER || list.some((x) => norm(x) === norm(idea))) return;
+      p.choice = [...list, idea];
+      this.push();
+      return this.persist();
+    }
+    if (p.choice !== null) return;
     const choice = this.cleanChoice(s.quiz.questions[s.q], raw);
     if (choice === undefined) return;
     p.choice = choice;
@@ -863,14 +958,68 @@ export class GameRoom extends DurableObject {
     const s = this.s;
     if (s.phase !== "question" || p.choice !== null) return;
     const q = s.quiz.questions[s.q];
-    if (!isPin(q) && q.type !== "puzzle") return;
+    if (!isPin(q) && q.type !== "puzzle" && q.type !== "drop") return;
     p.draft = Array.isArray(raw) && !raw.length ? null : this.cleanChoice(q, raw) ?? p.draft ?? null;
+    await this.persist();
+  }
+
+  // Brainstorm, step 2: every idea on the host's screen, the same idea from different people as one.
+  async toIdeas() {
+    const s = this.s;
+    const byKey = new Map();
+    for (const p of Object.values(s.players)) {
+      for (const t of p.choice || []) {
+        const k = norm(t) || t;
+        const g = byKey.get(k) || { id: byKey.size, text: t, n: 0, members: [] };
+        g.n++;
+        if (!g.members.includes(t)) g.members.push(t);
+        byKey.set(k, g);
+      }
+    }
+    s.ideas = [...byKey.values()];
+    s.phase = "ideas";
+    this.push();
+    await this.persist();
+  }
+
+  // The host groups idea b into idea a (it keeps a's wording; b's count and wordings join it).
+  async group(a, b) {
+    const s = this.s;
+    if (s.phase !== "ideas" || !Array.isArray(s.ideas) || a === b) return;
+    const A = s.ideas.find((x) => x.id === a), B = s.ideas.find((x) => x.id === b);
+    if (!A || !B) return;
+    A.n += B.n;
+    A.members = [...new Set([...A.members, ...B.members])];
+    s.ideas = s.ideas.filter((x) => x !== B);
+    this.push();
+    await this.persist();
+  }
+
+  // Brainstorm, step 3: everyone votes for up to VOTES_PER favourites. With fewer than 2 ideas there's nothing to vote on.
+  async startVote() {
+    const s = this.s;
+    if (!s.ideas || s.ideas.length < 2) return this.reveal();
+    Object.assign(s, { phase: "vote", started: Date.now() });
+    for (const p of Object.values(s.players)) p.vote = null;
+    this.push();
+    await this.persist();
+  }
+
+  async vote(p, raw) {
+    const s = this.s;
+    const ids = new Set(s.ideas.map((x) => x.id));
+    const list = Array.isArray(raw) ? [...new Set(raw)] : [];
+    if (p.vote || !list.length || list.length > VOTES_PER || !list.every((id) => ids.has(id))) return;
+    p.vote = list;
+    if (Object.values(s.players).every((x) => x.vote)) return this.reveal();
+    this.push();
     await this.persist();
   }
 
   async reveal() {
     const s = this.s;
     const q = s.quiz.questions[s.q];
+    if (isOpinion(q)) return this.revealOpinion(q);
     const qq = this.withPerm(q);
     for (const p of Object.values(s.players)) {
       if (p.choice === null && p.draft) { p.choice = p.draft; p.ms = q.time * 1000; p.auto = true; }  // didn't lock in: the draft counts
@@ -893,7 +1042,78 @@ export class GameRoom extends DurableObject {
     }
     s.phase = "reveal";
     this.push();
+    await this.keepLog();
     await this.persist();
+  }
+
+  async revealOpinion(q) {
+    const s = this.s;
+    for (const p of Object.values(s.players)) {
+      if (p.choice === null && p.draft) { p.choice = p.draft; p.auto = true; }   // a dropped pin that wasn't locked in still counts
+      Object.assign(p, { gained: 0, right: false, draft: null });
+    }
+    if (q.type === "brain" && s.ideas) {
+      for (const idea of s.ideas) idea.votes = Object.values(s.players).filter((p) => p.vote?.includes(idea.id)).length;
+    }
+    s.phase = "reveal";
+    this.push();
+    await this.keepLog();
+    await this.persist();
+  }
+
+  // Every reply to this question, for the host's responses download (no names on anonymous questions).
+  async keepLog() {
+    const s = this.s;
+    const q = s.quiz.questions[s.q];
+    const anon = isOpinion(q) && q.anon;
+    const entry = {
+      question: this.question(), anon,
+      ...(q.type === "brain" ? { ideas: (s.ideas || []).map(({ text, n, members, votes }) => ({ text, n, members, votes: votes || 0 })) } : {}),
+      rows: Object.values(s.players).map((p) => ({
+        name: anon ? null : p.name, choice: p.choice, gained: p.gained, ok: p.right, found: p.found || 0, stray: p.stray || 0,
+        ...(q.type === "brain" && p.vote ? { vote: p.vote.map((id) => s.ideas.find((x) => x.id === id)?.text).filter(Boolean) } : {}),
+      })),
+    };
+    if (q.type === "slider") entry.question.answer = q.answer;
+    else if (q.type === "type") entry.question.accepted = q.accepted;
+    else if (q.type === "puzzle") entry.question.solution = q.answers;
+    else if (q.type === "quiz" || q.type === "tf") entry.question.correct = q.correct;
+    if (anon) entry.rows.sort(() => 0.5 - Math.random());   // anonymous: not even in joining order
+    this.log[s.q] = entry;
+    await this.ctx.storage.put(`log:${s.q}`, entry);
+  }
+
+  // What the room said, added up (players see the totals; the host also sees the words and, if named, the names).
+  opinion(q, host) {
+    const s = this.s;
+    const got = Object.values(s.players).filter((p) => p.choice !== null && p.choice !== undefined);
+    const who = (p) => (q.anon ? {} : { name: p.name, look: p.look });
+    const r = { total: got.length };
+    if (q.type === "poll") {
+      r.counts = q.answers.map((_, i) => got.filter((p) => p.choice === i).length);
+      const others = got.filter((p) => typeof p.choice === "string");
+      r.otherCount = others.length;
+      if (host) r.others = others.map((p) => ({ text: p.choice, ...who(p) }));
+    } else if (q.type === "scale") {
+      r.counts = Array.from({ length: q.mode === "nps" ? 11 : 5 }, (_, k) => got.filter((p) => p.choice === k).length);
+      const base = q.mode === "nps" ? 0 : 1;   // agree/disagree points are numbered 1–5
+      r.avg = got.length ? Math.round((got.reduce((a, p) => a + p.choice + base, 0) / got.length) * 10) / 10 : null;
+      if (q.mode === "nps" && got.length) {
+        const pro = got.filter((p) => p.choice >= 9).length, det = got.filter((p) => p.choice <= 6).length;
+        Object.assign(r, { nps: Math.round(((pro - det) / got.length) * 100), promoters: pro, passives: got.length - pro - det, detractors: det });
+      }
+    } else if (q.type === "cloud") {
+      r.words = tallyWords(got.map((p) => p.choice));
+    } else if (q.type === "drop") {
+      if (host) r.pins = got.map((p) => ({ x: p.choice[0], y: p.choice[1], ...who(p) }));
+    } else if (q.type === "open") {
+      if (host) r.answers = got.map((p) => ({ text: p.choice, ...who(p) }));
+      if (q.anon && host) r.answers.sort(() => 0.5 - Math.random());
+    } else if (q.type === "brain") {
+      r.ideas = (s.ideas || []).map(({ id, text, n, members, votes }) => ({ id, text, n, members, votes: votes || 0 }))
+        .sort((a, b) => b.votes - a.votes || b.n - a.n);
+    }
+    return r;
   }
 
   // Game over: note it on the quiz and in every player's history.
@@ -908,7 +1128,8 @@ export class GameRoom extends DurableObject {
         db.prepare("UPDATE played SET score = ?, place = ?, players = ?, done = 1 WHERE uid = ? AND gid = ?")
           .bind(row.score, i + 1, board.length, s.players[row.id].uid, s.gid)),
       // Lifetime stats (games with at least 2 players only): name and look from this game, totals added up.
-      ...(board.length < RATED_MIN_PLAYERS ? [] : board.map((row, i) =>
+      // (Forms, with only opinion questions, have no scores, so they don't count either.)
+      ...(board.length < RATED_MIN_PLAYERS || s.quiz.questions.every(isOpinion) ? [] : board.map((row, i) =>
         db.prepare("UPDATE users SET name = ?, look = ?, games = games + 1, points = points + ?, wins = wins + ?, " +
           "podiums = podiums + ?, best = MAX(best, ?) WHERE uid = ?")
           .bind(row.name, row.look || null, row.score, i === 0 ? 1 : 0, i === 1 || i === 2 ? 1 : 0, row.score, s.players[row.id].uid))),
@@ -939,8 +1160,12 @@ export class GameRoom extends DurableObject {
   question() {
     const q = this.withPerm(this.s.quiz.questions[this.s.q]);
     // Puzzle items go out shuffled: shown[i] = answers[perm[i]].
-    const answers = q.type === "puzzle" ? q.perm.map((k) => q.answers[k]) : q.type === "type" ? [] : q.answers || [];
-    return { type: ["tf", "slider", "type", "puzzle"].includes(q.type) ? q.type : isPin(q) ? "pin" : "quiz", title: q.title, answers, time: q.time, image: q.image,
+    const answers = q.type === "puzzle" ? q.perm.map((k) => q.answers[k]) : q.type === "type" || (isOpinion(q) && q.type !== "poll") ? [] : q.answers || [];
+    return { type: typeOfQ(q), title: q.title, answers, time: q.time, image: q.image,
+      ...(isOpinion(q) ? { opinion: true, anon: !!q.anon } : {}),
+      ...(q.type === "poll" ? { other: !!q.other } : {}),
+      ...(q.type === "scale" ? { mode: q.mode, labels: q.labels } : {}),
+      ...(q.type === "brain" ? { ideasMax: IDEAS_PER, votesMax: VOTES_PER, voteTime: VOTE_TIME } : {}),
       ...(isPin(q) ? { maxPins: q.regions.length, penalty: q.penalty || 0 } : {}),  // how many pins a player may drop (one per area)
       ...(q.type === "slider" ? { min: q.min, max: q.max, step: q.step, unit: q.unit } : {}) };
   }
@@ -951,17 +1176,21 @@ export class GameRoom extends DurableObject {
     const st = {
       t: "state", v: this.v, now: Date.now(), phase: s.phase, pin: s.pin, quizTitle: s.quiz.title, cover: s.quiz.cover || null,
       qIndex: s.q, total: s.quiz.questions.length, count: board.length,
+      form: s.quiz.questions.every(isOpinion),   // only opinion questions: a form, so no scores or podium
     };
     // The next question's picture, so screens can fetch it before it's needed.
     const upcoming = s.phase === "lobby" ? 0 : s.phase === "reveal" ? s.q + 1 : -1;
     if (upcoming >= 0 && s.quiz.questions[upcoming]?.image) st.preload = s.quiz.questions[upcoming].image;
-    const live = s.phase === "question" || s.phase === "reveal";
+    const live = ["question", "reveal", "ideas", "vote"].includes(s.phase);
     const q = live ? s.quiz.questions[s.q] : null;
     if (live) {
       st.question = this.question();
-      st.remaining = Math.max(0, Math.floor(q.time * 1000 - (Date.now() - s.started)));
-      st.endsAt = s.started + q.time * 1000;   // server clock; screens line their countdown up with "now"
-      if (s.phase === "reveal") {
+      const limit = s.phase === "vote" ? VOTE_TIME * 1000 : q.time * 1000;
+      st.remaining = Math.max(0, Math.floor(limit - (Date.now() - s.started)));
+      st.endsAt = s.started + limit;   // server clock; screens line their countdown up with "now"
+      if (s.phase === "ideas" || s.phase === "vote") st.ideas = s.ideas.map(({ id, text, n, members }) => ({ id, text, n, members }));
+      if (s.phase === "reveal" && isOpinion(q)) st.results = this.opinion(q, pid === null);
+      else if (s.phase === "reveal") {
         if (isPin(q)) st.regions = q.regions;
         else if (q.type === "slider") Object.assign(st, { correct: q.answer, tolerance: MARGINS[q.margin] * (q.max - q.min) });
         else if (q.type === "type") st.accepted = q.accepted;
@@ -973,9 +1202,14 @@ export class GameRoom extends DurableObject {
     if (pid === null) {
       st.role = "host";
       st.players = board.map(({ name, score, gained, look }) => ({ name, score, gained, look }));
+      if (s.phase === "final") st.responses = this.log.filter(Boolean);
       if (live) {
-        st.answered = players.filter((p) => p.choice !== null).length;
-        if (s.phase === "reveal") {
+        st.answered = s.phase === "vote" ? players.filter((p) => p.vote).length : players.filter((p) => p.choice !== null).length;
+        if (s.phase === "reveal" && isOpinion(q)) {
+          // Who said what, only when the question isn't anonymous.
+          if (!q.anon) st.replies = players.map((p) => ({ name: p.name, look: p.look, choice: p.choice }))
+            .sort((a, b) => (a.choice === null) - (b.choice === null) || a.name.localeCompare(b.name));
+        } else if (s.phase === "reveal") {
           if (isPin(q)) {
             st.pins = players.filter((p) => p.choice !== null)
               .flatMap((p) => pinsOf(p.choice).map((pt) => ({ x: pt[0], y: pt[1], ok: q.regions.some((r) => inRegion(r, pt)), name: p.name })));
@@ -1001,7 +1235,7 @@ export class GameRoom extends DurableObject {
       const p = s.players[pid];
       Object.assign(st, {
         role: "player", name: p.name, look: p.look, score: p.score, gained: p.gained, choice: p.choice, right: p.right, found: p.found || 0,
-        stray: p.stray || 0, auto: !!p.auto, draft: p.draft ?? null,
+        stray: p.stray || 0, auto: !!p.auto, draft: p.draft ?? null, vote: p.vote ?? null,
         rank: board.findIndex((r) => r.id === pid) + 1,
       });
     }

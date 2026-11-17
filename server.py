@@ -41,7 +41,7 @@ IMG_RE = re.compile(r"^data:image/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$"
 KEEP_RE = re.compile(r"^/api/quizzes/([\w-]+)/image/(\d+)(?:\?v=\d+)?$")  # "keep the picture you already have"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,40}$")
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{32}$")
-TIMES = (10, 20, 30, 60)
+TIMES = (10, 20, 30, 60, 90, 120)
 SPA = ("/", "/create", "/play", "/dashboard", "/leaderboard", "/explore")
 
 LOCK = threading.RLock()
@@ -80,6 +80,23 @@ def clean_quiz(body, quiz_id=None, old=None):
             questions.append({"type": "pin", "title": qtitle, "image": image,
                               "regions": clean_regions(q.get("regions"), n), "time": limit,
                               "penalty": q.get("penalty") if q.get("penalty") in PENALTIES and not isinstance(q.get("penalty"), bool) else 0})
+            continue
+        if q.get("type") in OPINION:
+            base = {"type": q["type"], "title": qtitle, "image": image, "time": limit, "anon": q.get("anon") is True}
+            if q["type"] == "poll":
+                items = q.get("answers") if isinstance(q.get("answers"), list) else []
+                items = [str(a).strip()[:100] for a in items]
+                if not 2 <= len(items) <= 4 or not all(items):
+                    raise ValueError(f"Question {n}: a poll needs 2 to 4 options")
+                base.update(answers=items, other=q.get("other") is True)
+            elif q["type"] == "scale":
+                mode = "nps" if q.get("mode") == "nps" else "likert"
+                raw_labels = q.get("labels") if isinstance(q.get("labels"), list) else []
+                base.update(mode=mode, labels=[(str(raw_labels[k]).strip()[:40] if k < len(raw_labels) and raw_labels[k] is not None else "") or d
+                                               for k, d in enumerate(NPS_ENDS if mode == "nps" else LIKERT)])
+            elif q["type"] == "drop" and not image:
+                raise ValueError(f"Question {n} needs a picture to drop pins on")
+            questions.append(base)
             continue
         if q.get("type") == "tf":
             if q.get("correct") not in (0, 1) or isinstance(q.get("correct"), bool):
@@ -299,8 +316,45 @@ def typed_tally(players):
     return sorted(groups.values(), key=lambda g: (-g["n"], not g["ok"]))[:8]
 
 
+# ---------- collect opinions ----------
+# Opinion questions have no right answer and score no points: Poll (optionally with "Other", which players
+# type), Scale (agree...disagree with your own labels, or NPS 0-10), Drop pin, Word cloud, Open-ended and
+# Brainstorm (ideas, then the host groups them, then everyone votes). Each can be anonymous: then the host
+# sees what was said but never who said it, live or in the downloaded responses.
+OPINION = ("poll", "scale", "drop", "cloud", "open", "brain")
+OTHER_MAX, CLOUD_MAX, OPEN_MAX, IDEA_MAX = 60, 25, 250, 75
+IDEAS_PER = 3   # ideas each player may add to a brainstorm
+VOTES_PER = 3   # favourite ideas each player may vote for
+VOTE_TIME = 30  # seconds to vote
+LIKERT = ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"]
+NPS_ENDS = ["Not likely at all", "Extremely likely"]
+ANSWER_MAX = {"cloud": CLOUD_MAX, "open": OPEN_MAX, "brain": IDEA_MAX}
+
+
+def is_opinion(q):
+    return q.get("type") in OPINION
+
+
+def one_line(v, n):
+    return " ".join(str(v).split())[:n]
+
+
+def tally_words(items, limit=60):
+    """Words for a cloud: the same word however it's written counts together; the commonest spelling is shown."""
+    groups = {}
+    for t in items:
+        k = norm(t)
+        if not k:
+            continue
+        g = groups.setdefault(k, {"n": 0, "forms": {}})
+        g["n"] += 1
+        g["forms"][t] = g["forms"].get(t, 0) + 1
+    rows = [{"text": max(g["forms"].items(), key=lambda f: f[1])[0], "n": g["n"]} for g in groups.values()]
+    return sorted(rows, key=lambda r: (-r["n"], r["text"]))[:limit]
+
+
 def is_right(q, choice):
-    if choice is None:
+    if choice is None or is_opinion(q):
         return False
     if is_pin(q):
         return areas_found(q, choice) == len(q["regions"])
@@ -450,6 +504,8 @@ class Game:
         self.timer = None
         self.subs = []             # (player_id or None for host, Queue)
         self.v = int(time.time() * 1000)  # state version: screens ignore anything older than what they have
+        self.ideas = None          # brainstorm ideas: [{id, text, n, members, votes}]
+        self.log = {}              # question index -> every reply, for the host's responses download
 
     # -- state machine --
     def advance(self):
@@ -457,6 +513,10 @@ class Game:
             if self.players:
                 self.ask(0)
         elif self.phase == "question":
+            self.to_ideas() if self.quiz["questions"][self.q].get("type") == "brain" else self.reveal()
+        elif self.phase == "ideas":
+            self.start_vote()
+        elif self.phase == "vote":
             self.reveal()
         elif self.phase == "reveal":
             if self.q + 1 < len(self.quiz["questions"]):
@@ -467,22 +527,53 @@ class Game:
                 self.push()
 
     def ask(self, i):
-        self.q, self.phase, self.started = i, "question", time.time()
+        self.q, self.phase, self.started, self.ideas = i, "question", time.time(), None
         for p in self.players.values():
             p["choice"], p["ms"], p["gained"], p["right"], p["found"] = None, 0, 0, False, 0
-            p["draft"], p["auto"], p["stray"] = None, False, 0
-        self.timer = threading.Timer(self.quiz["questions"][i]["time"] + 0.4, self.timeout, [i])
-        self.timer.daemon = True
-        self.timer.start()
+            p["draft"], p["auto"], p["stray"], p["vote"] = None, False, 0, None
+        self.arm(self.quiz["questions"][i]["time"])
         self.push()
 
-    def timeout(self, i):
+    def arm(self, secs):
+        if self.timer:
+            self.timer.cancel()
+        self.timer = threading.Timer(secs + 0.4, self.timeout, [self.q, self.phase])
+        self.timer.daemon = True
+        self.timer.start()
+
+    def limit(self):
+        """How long the timed part of this screen lasts (seconds): the question's time, or the brainstorm vote."""
+        return VOTE_TIME if self.phase == "vote" else self.quiz["questions"][self.q]["time"]
+
+    def timeout(self, i, phase):
         with LOCK:
-            if self.phase == "question" and self.q == i:
+            if self.phase != phase or self.q != i:
+                return
+            if phase == "question" and self.quiz["questions"][i].get("type") == "brain":
+                self.to_ideas()
+            else:
                 self.reveal()
 
     def clean_choice(self, q, choice):
         """Check a reply against the question: returns it cleaned up, or INVALID."""
+        t = q.get("type")
+        if t == "poll":
+            if isinstance(choice, str):   # "Other: ..."
+                return (one_line(choice, OTHER_MAX) or INVALID) if q.get("other") else INVALID
+            if isinstance(choice, bool) or not isinstance(choice, int) or not 0 <= choice < len(q["answers"]):
+                return INVALID
+            return choice
+        if t == "scale":
+            top = 11 if q.get("mode") == "nps" else 5
+            return choice if isinstance(choice, int) and not isinstance(choice, bool) and 0 <= choice < top else INVALID
+        if t == "drop":
+            try:
+                x, y = float(choice["x"]), float(choice["y"])
+            except (TypeError, KeyError, ValueError):
+                return INVALID
+            return [round(x, 4), round(y, 4)] if 0 <= x <= 1 and 0 <= y <= 1 else INVALID
+        if t in ANSWER_MAX:
+            return (one_line(choice, ANSWER_MAX[t]) or INVALID) if isinstance(choice, str) else INVALID
         if is_pin(q):
             # One pin ({x, y}) or several ([{x, y}, ...]), at most one per target area.
             items = choice if isinstance(choice, list) else [choice]
@@ -519,7 +610,20 @@ class Game:
         return choice
 
     def answer(self, p, raw):
-        if self.phase != "question" or p["choice"] is not None:
+        if self.phase == "vote":
+            return self.vote(p, raw)
+        if self.phase != "question":
+            return
+        q = self.quiz["questions"][self.q]
+        if q.get("type") == "brain":
+            # Brainstorm: each idea is added on its own, up to IDEAS_PER (the same idea twice counts once).
+            idea = self.clean_choice(q, raw)
+            ideas = p["choice"] or []
+            if idea is INVALID or len(ideas) >= IDEAS_PER or any(norm(x) == norm(idea) for x in ideas):
+                return
+            p["choice"] = ideas + [idea]
+            return self.push()
+        if p["choice"] is not None:
             return
         choice = self.clean_choice(self.quiz["questions"][self.q], raw)
         if choice is INVALID:
@@ -536,7 +640,7 @@ class Game:
         if self.phase != "question" or p["choice"] is not None:
             return
         q = self.quiz["questions"][self.q]
-        if not is_pin(q) and q.get("type") != "puzzle":
+        if not is_pin(q) and q.get("type") not in ("puzzle", "drop"):
             return
         if isinstance(raw, list) and not raw:
             p["draft"] = None
@@ -545,9 +649,61 @@ class Game:
         if choice is not INVALID:
             p["draft"] = choice
 
+    def to_ideas(self):
+        """Brainstorm, step 2: every idea on the host's screen, the same idea from different people as one."""
+        groups = {}
+        for p in self.players.values():
+            for t in p["choice"] or []:
+                g = groups.setdefault(norm(t) or t, {"id": len(groups), "text": t, "n": 0, "members": []})
+                g["n"] += 1
+                if t not in g["members"]:
+                    g["members"].append(t)
+        if self.timer:
+            self.timer.cancel()
+        self.ideas = list(groups.values())
+        self.phase = "ideas"
+        self.push()
+
+    def group(self, a, b):
+        """The host groups idea b into idea a (it keeps a's wording; b's count and wordings join it)."""
+        if self.phase != "ideas" or not self.ideas or a == b:
+            return
+        A = next((x for x in self.ideas if x["id"] == a), None)
+        B = next((x for x in self.ideas if x["id"] == b), None)
+        if not A or not B:
+            return
+        A["n"] += B["n"]
+        A["members"] += [m for m in B["members"] if m not in A["members"]]
+        self.ideas.remove(B)
+        self.push()
+
+    def start_vote(self):
+        """Brainstorm, step 3: everyone votes for up to VOTES_PER favourites (with under 2 ideas, skip to results)."""
+        if not self.ideas or len(self.ideas) < 2:
+            return self.reveal()
+        self.phase, self.started = "vote", time.time()
+        for p in self.players.values():
+            p["vote"] = None
+        self.arm(VOTE_TIME)
+        self.push()
+
+    def vote(self, p, raw):
+        ids = {x["id"] for x in self.ideas}
+        picks = list(dict.fromkeys(raw)) if isinstance(raw, list) else []
+        if p.get("vote") or not 1 <= len(picks) <= VOTES_PER or not all(
+                isinstance(i, int) and not isinstance(i, bool) and i in ids for i in picks):
+            return
+        p["vote"] = picks
+        if all(x.get("vote") for x in self.players.values()):
+            self.reveal()
+        else:
+            self.push()
+
     def reveal(self):
         if self.timer:
             self.timer.cancel()
+        if is_opinion(self.quiz["questions"][self.q]):
+            return self.reveal_opinion(self.quiz["questions"][self.q])
         q = self.with_perm(self.quiz["questions"][self.q])
         for p in self.players.values():
             if p["choice"] is None and p.get("draft"):   # didn't lock in: the draft counts, at the slowest speed
@@ -572,7 +728,84 @@ class Game:
             p["gained"] = max(p["gained"], -p["score"])
             p["score"] += p["gained"]
         self.phase = "reveal"
+        self.keep_log()
         self.push()
+
+    def reveal_opinion(self, q):
+        for p in self.players.values():
+            if p["choice"] is None and p.get("draft"):   # a dropped pin that wasn't locked in still counts
+                p["choice"], p["auto"] = p["draft"], True
+            p["gained"], p["right"], p["draft"] = 0, False, None
+        if q.get("type") == "brain" and self.ideas:
+            for idea in self.ideas:
+                idea["votes"] = sum(1 for p in self.players.values() if p.get("vote") and idea["id"] in p["vote"])
+        self.phase = "reveal"
+        self.keep_log()
+        self.push()
+
+    def keep_log(self):
+        """Every reply to this question, for the host's responses download (no names on anonymous questions)."""
+        q = self.quiz["questions"][self.q]
+        anon = is_opinion(q) and bool(q.get("anon"))
+        question = self.question()
+        if q.get("type") == "slider":
+            question["answer"] = q["answer"]
+        elif q.get("type") == "type":
+            question["accepted"] = q["accepted"]
+        elif q.get("type") == "puzzle":
+            question["solution"] = q["answers"]
+        elif q.get("type") in ("quiz", "tf") or (not q.get("type") and "correct" in q):
+            question["correct"] = q["correct"]
+        rows = []
+        for p in self.players.values():
+            row = {"name": None if anon else p["name"], "choice": p["choice"], "gained": p["gained"], "ok": p["right"],
+                   "found": p.get("found", 0), "stray": p.get("stray", 0)}
+            if q.get("type") == "brain" and p.get("vote"):
+                row["vote"] = [x["text"] for x in self.ideas if x["id"] in p["vote"]]
+            rows.append(row)
+        if anon:
+            random.shuffle(rows)   # anonymous: not even in joining order
+        entry = {"question": question, "anon": anon, "rows": rows}
+        if q.get("type") == "brain":
+            entry["ideas"] = [{k: x.get(k, 0) for k in ("text", "n", "members", "votes")} for x in self.ideas or []]
+        self.log[self.q] = entry
+
+    def opinion(self, q, host):
+        """What the room said, added up (players see the totals; the host also sees the words and, if named, the names)."""
+        got = [p for p in self.players.values() if p["choice"] is not None]
+        anon = bool(q.get("anon"))
+        who = (lambda p: {}) if anon else (lambda p: {"name": p["name"], "look": p.get("look")})
+        r = {"total": len(got)}
+        t = q.get("type")
+        if t == "poll":
+            r["counts"] = [sum(1 for p in got if p["choice"] == i and not isinstance(p["choice"], str)) for i in range(len(q["answers"]))]
+            others = [p for p in got if isinstance(p["choice"], str)]
+            r["otherCount"] = len(others)
+            if host:
+                r["others"] = [dict({"text": p["choice"]}, **who(p)) for p in others]
+        elif t == "scale":
+            top = 11 if q.get("mode") == "nps" else 5
+            r["counts"] = [sum(1 for p in got if p["choice"] == k) for k in range(top)]
+            base = 0 if q.get("mode") == "nps" else 1   # agree/disagree points are numbered 1-5
+            r["avg"] = round(sum(p["choice"] + base for p in got) / len(got), 1) if got else None
+            if q.get("mode") == "nps" and got:
+                pro = sum(1 for p in got if p["choice"] >= 9)
+                det = sum(1 for p in got if p["choice"] <= 6)
+                r.update(nps=round((pro - det) / len(got) * 100), promoters=pro, passives=len(got) - pro - det, detractors=det)
+        elif t == "cloud":
+            r["words"] = tally_words([p["choice"] for p in got])
+        elif t == "drop":
+            if host:
+                r["pins"] = [dict({"x": p["choice"][0], "y": p["choice"][1]}, **who(p)) for p in got]
+        elif t == "open":
+            if host:
+                r["answers"] = [dict({"text": p["choice"]}, **who(p)) for p in got]
+                if anon:
+                    random.shuffle(r["answers"])
+        elif t == "brain":
+            r["ideas"] = sorted(({**{k: x[k] for k in ("id", "text", "n", "members")}, "votes": x.get("votes", 0)} for x in self.ideas or []),
+                                key=lambda x: (-x["votes"], -x["n"]))
+        return r
 
     def record(self):
         """Game over: note it on the quiz and in every player's history."""
@@ -588,7 +821,8 @@ class Game:
             for e in u["played"]:
                 if e["id"] == self.gid:
                     e.update(score=row["score"], rank=rank, count=len(board), done=True)
-            if len(board) >= RATED_MIN_PLAYERS:
+            # (Forms, with only opinion questions, have no scores, so they don't count either.)
+            if len(board) >= RATED_MIN_PLAYERS and not all(is_opinion(x) for x in self.quiz["questions"]):
                 st = u.setdefault("stats", {})
                 st["name"], st["look"] = row["name"], row.get("look")
                 st["games"] = st.get("games", 0) + 1
@@ -610,8 +844,9 @@ class Game:
 
     def question(self):
         q = self.with_perm(self.quiz["questions"][self.q])
-        answers = [q["answers"][k] for k in q["perm"]] if q.get("type") == "puzzle" else [] if q.get("type") == "type" else q.get("answers", [])
-        out = {"type": q.get("type") if q.get("type") in ("tf", "slider", "type", "puzzle") else "pin" if is_pin(q) else "quiz", "title": q["title"],
+        answers = [q["answers"][k] for k in q["perm"]] if q.get("type") == "puzzle" \
+            else [] if q.get("type") == "type" or (is_opinion(q) and q.get("type") != "poll") else q.get("answers", [])
+        out = {"type": q.get("type") if q.get("type") in ("tf", "slider", "type", "puzzle") + OPINION else "pin" if is_pin(q) else "quiz", "title": q["title"],
                "answers": answers, "time": q["time"],
                "image": image_url(self.quiz_id, self.quiz, self.q)}
         if is_pin(q):
@@ -619,26 +854,40 @@ class Game:
             out["penalty"] = q.get("penalty", 0)
         if q.get("type") == "slider":
             out.update({k: q[k] for k in ("min", "max", "step", "unit")})
+        if is_opinion(q):
+            out.update(opinion=True, anon=bool(q.get("anon")))
+        if q.get("type") == "poll":
+            out["other"] = bool(q.get("other"))
+        if q.get("type") == "scale":
+            out.update(mode=q["mode"], labels=q["labels"])
+        if q.get("type") == "brain":
+            out.update(ideasMax=IDEAS_PER, votesMax=VOTES_PER, voteTime=VOTE_TIME)
         return out
 
     def state(self, pid):
         board = self.board()
         s = {"t": "state", "v": self.v, "now": int(time.time() * 1000), "phase": self.phase, "pin": self.pin, "quizTitle": self.quiz["title"],
              "cover": image_url(self.quiz_id, self.quiz, COVER),
-             "qIndex": self.q, "total": len(self.quiz["questions"]), "count": len(board)}
+             "qIndex": self.q, "total": len(self.quiz["questions"]), "count": len(board),
+             "form": all(is_opinion(x) for x in self.quiz["questions"])}  # only opinion questions: no scores or podium
         # The next question's picture, so screens can fetch it before it's needed.
         upcoming = 0 if self.phase == "lobby" else self.q + 1 if self.phase == "reveal" else -1
         if 0 <= upcoming < len(self.quiz["questions"]):
             pic = image_url(self.quiz_id, self.quiz, upcoming)
             if pic:
                 s["preload"] = pic
-        live = self.phase in ("question", "reveal")
+        live = self.phase in ("question", "reveal", "ideas", "vote")
         if live:
             q = self.quiz["questions"][self.q]
             s["question"] = self.question()
-            s["remaining"] = max(0, int(q["time"] * 1000 - (time.time() - self.started) * 1000))
-            s["endsAt"] = int(self.started * 1000 + q["time"] * 1000)  # server clock; screens line up with "now"
-            if self.phase == "reveal":
+            limit = VOTE_TIME if self.phase == "vote" else q["time"]
+            s["remaining"] = max(0, int(limit * 1000 - (time.time() - self.started) * 1000))
+            s["endsAt"] = int(self.started * 1000 + limit * 1000)  # server clock; screens line up with "now"
+            if self.phase in ("ideas", "vote"):
+                s["ideas"] = [{k: x[k] for k in ("id", "text", "n", "members")} for x in self.ideas or []]
+            if self.phase == "reveal" and is_opinion(q):
+                s["results"] = self.opinion(q, pid is None)
+            elif self.phase == "reveal":
                 if is_pin(q):
                     s["regions"] = q["regions"]
                 elif q.get("type") == "slider":
@@ -653,10 +902,17 @@ class Game:
         if pid is None:
             s["role"] = "host"
             s["players"] = [{k: r[k] for k in ("name", "score", "gained", "look")} for r in board]
+            if self.phase == "final":
+                s["responses"] = [self.log[k] for k in sorted(self.log)]
             if live:
                 picks = [p["choice"] for p in self.players.values()]
-                s["answered"] = sum(c is not None for c in picks)
-                if self.phase == "reveal":
+                s["answered"] = sum(1 for p in self.players.values() if p.get("vote")) if self.phase == "vote" \
+                    else sum(c is not None for c in picks)
+                if self.phase == "reveal" and is_opinion(q):
+                    if not q.get("anon"):   # who said what, only when the question isn't anonymous
+                        s["replies"] = sorted(({"name": p["name"], "look": p.get("look"), "choice": p["choice"]} for p in self.players.values()),
+                                              key=lambda r: (r["choice"] is None, r["name"].lower()))
+                elif self.phase == "reveal":
                     if is_pin(q):
                         s["pins"] = [{"x": pt[0], "y": pt[1], "ok": any(in_region(r, pt) for r in q["regions"]), "name": p["name"]}
                                      for p in self.players.values() if p["choice"] is not None for pt in pins_of(p["choice"])]
@@ -681,7 +937,7 @@ class Game:
             p = self.players[pid]
             s.update(role="player", name=p["name"], look=p.get("look"), score=p["score"], gained=p["gained"],
                      choice=p["choice"], right=p["right"], found=p.get("found", 0),
-                     stray=p.get("stray", 0), auto=bool(p.get("auto")), draft=p.get("draft"),
+                     stray=p.get("stray", 0), auto=bool(p.get("auto")), draft=p.get("draft"), vote=p.get("vote"),
                      rank=[r["id"] for r in board].index(pid) + 1)
         return s
 
@@ -1131,6 +1387,11 @@ class Handler(BaseHTTPRequestHandler):
             (g.answer if action == "answer" else g.draft)(p, body.get("choice"))
             # The player's screen as it is now, so it can move on without waiting for the stream.
             return self.send_json(200, {"ok": True, "state": g.state(body.get("player")) if g.pin in GAMES else None})
+        elif action == "group":   # brainstorm: the host drops one idea onto another
+            if body.get("token") != g.token:
+                return self.fail(403, "Only the host can do that")
+            g.group(body.get("a"), body.get("b"))
+            return self.send_json(200, {"ok": True, "state": g.state(None)})
         elif action in ("next", "end"):
             if body.get("token") != g.token:
                 return self.fail(403, "Only the host can do that")

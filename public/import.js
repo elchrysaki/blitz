@@ -5,7 +5,10 @@
 // Reads: plain text / Markdown (typed or pasted), CSV / TSV, Excel .xlsx (incl. Kahoot's quiz
 // template), Word .docx and JSON. Pictures are matched to questions by the app (see app.js).
 (() => {
-  const TIMES = [10, 20, 30, 60];
+  const TIMES = [10, 20, 30, 60, 90, 120];
+  const OPINION = ['poll', 'scale', 'drop', 'cloud', 'open', 'brain'];
+  const LIKERT = ['Strongly disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly agree'];
+  const NPS_ENDS = ['Not likely at all', 'Extremely likely'];
   const LET = 'ABCD';
   const clean = (s) => String(s ?? '').replace(/[   ]/g, ' ').replace(/\s+/g, ' ').trim();
   const norm = (s) => clean(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -38,7 +41,7 @@
     letter: /^\s*[*+]?\s*\(?([a-dA-D])\s*[).:\]]\s+(.+)$/,                 // "a) …", "B. …", "(c) …", "*b) …"
     numOpt: /^\s*\(?([1-9])\s*[)\]]\s+(.+)$/,                               // "1) …" inside a question
     bullet: /^\s*(?:[-•–]|\*(?=\s)|\+(?=\s))\s+(.+)$/,                      // "- …", "• …", "* …"
-    meta: /^\s*(answers?|correct(?:\s+answers?)?|right\s+answer|ans|solution|time(?:\s+limit)?|timer|seconds|secs|image|picture|photo|img|pic|type|kind|range|from|to|min|max|unit|step|margin|accept|also\s+accept|order|title|quiz)\s*[:=]\s*(.*)$/i,
+    meta: /^\s*(answers?|correct(?:\s+answers?)?|right\s+answer|ans|solution|time(?:\s+limit)?|timer|seconds|secs|image|picture|photo|img|pic|type|kind|range|from|to|min|max|unit|step|margin|accept|also\s+accept|order|title|quiz|labels?|scale|other|anonymous|anon)\s*[:=]\s*(.*)$/i,
     keyHead: /^\s*(?:#+\s*)?(?:answer\s*key|answers|key|solutions?|correct\s+answers)\s*:?\s*$/i,
   };
   const metaKey = (k) => {
@@ -50,6 +53,8 @@
     if (k === 'from') return 'min';
     if (k === 'to') return 'max';
     if (k === 'also accept') return 'accept';
+    if (k === 'label' || k === 'scale') return 'labels';
+    if (k === 'anon') return 'anonymous';
     return k;
   };
 
@@ -257,13 +262,20 @@
   const pad4 = (a) => [...(Array.isArray(a) ? a.map((x) => String(x ?? '')) : []), '', '', '', ''].slice(0, 4);
   function fromBlitz(j) {
     const questions = (j.questions || []).map((o) => {
-      const type = ['quiz', 'tf', 'type', 'puzzle', 'slider', 'pin'].includes(o.type) ? o.type : 'quiz';
+      const type = ['quiz', 'tf', 'type', 'puzzle', 'slider', 'pin', ...OPINION].includes(o.type) ? o.type : 'quiz';
       const q = { type, title: clean(o.title).slice(0, 200), time: TIMES.includes(o.time) ? o.time : 20, imageRef: o.image || null, warnings: [] };
       if (type === 'quiz') Object.assign(q, { answers: pad4(o.answers), correct: Number.isInteger(o.correct) ? o.correct : 0 });
       if (type === 'tf') q.correct = o.correct ? 1 : 0;
       if (type === 'type') q.accepted = pad4(o.accepted);
       if (type === 'puzzle') q.answers = pad4(o.answers);
       if (type === 'slider') Object.assign(q, { min: +o.min, max: +o.max, step: +o.step || 1, answer: +o.answer, unit: clean(o.unit).slice(0, 12), margin: o.margin || 'medium' });
+      if (OPINION.includes(type)) q.anon = o.anon === true;
+      if (type === 'poll') Object.assign(q, { answers: pad4(o.answers), other: o.other === true });
+      if (type === 'scale') {
+        const labels = Array.isArray(o.labels) ? o.labels.map(clean) : [];
+        Object.assign(q, o.mode === 'nps' ? { mode: 'nps', ends: NPS_ENDS.map((d, k) => labels[k] || d) } : { mode: 'likert', labels: LIKERT.map((d, k) => labels[k] || d) });
+      }
+      if (type === 'drop' && !o.image) q.warnings.push('A Drop pin question needs its picture');
       if (type === 'pin') {
         Object.assign(q, { regions: Array.isArray(o.regions) ? o.regions : [], penalty: [0, 100, 250, 500].includes(o.penalty) ? o.penalty : 0 });
         if (!o.image) q.warnings.push('A Pin question needs its picture');
@@ -299,7 +311,10 @@
   // ---------- turn what was read into editor questions ----------
   const TYPE_WORDS = { quiz: 'quiz', mc: 'quiz', multiple: 'quiz', 'multiple choice': 'quiz', choice: 'quiz', tf: 'tf', 'true/false': 'tf', 'true false': 'tf', truefalse: 'tf', boolean: 'tf',
     type: 'type', 'type answer': 'type', typed: 'type', text: 'type', open: 'type', short: 'type', 'short answer': 'type', puzzle: 'puzzle', order: 'puzzle', ordering: 'puzzle', sort: 'puzzle',
-    slider: 'slider', range: 'slider', number: 'slider', numeric: 'slider', estimate: 'slider', pin: 'pin', map: 'pin' };
+    slider: 'slider', range: 'slider', number: 'slider', numeric: 'slider', estimate: 'slider', pin: 'pin', map: 'pin',
+    poll: 'poll', survey: 'poll', vote: 'poll', scale: 'scale', likert: 'scale', rating: 'scale', nps: 'nps', 'net promoter': 'nps',
+    cloud: 'cloud', 'word cloud': 'cloud', wordcloud: 'cloud', 'open ended': 'open', openended: 'open', brainstorm: 'brain', ideas: 'brain',
+    'drop pin': 'drop', drop: 'drop', droppin: 'drop' };
   const typeOf = (v) => (v ? TYPE_WORDS[clean(v).toLowerCase().replace(/[_-]/g, ' ')] ?? TYPE_WORDS[clean(v).toLowerCase().replace(/[^a-z/]/g, '')] ?? null : null);
   // Only true/false words make a True / False question (answers like "yes / no" stay as written).
   const isTrue = (s) => /^(true|t|vrai|wahr|verdadero|vero|σωστό|σωστο)$/i.test(clean(s));
@@ -330,6 +345,25 @@
     if (!base.title) return null;
     if (type === 'pin') return { skip: true, title: base.title, reason: 'Pin questions need their areas drawn on a picture, so add them in the editor' };
     let opts = c.options.filter((o) => o.text);
+    // Collect opinions: no right answer.
+    if (type && ['poll', 'scale', 'nps', 'cloud', 'open', 'brain', 'drop'].includes(type)) {
+      const yes = (v) => /^(yes|y|true|on|1)$/i.test(clean(v || ''));
+      const op = { ...base, anon: yes(meta.anonymous), warnings };
+      if (type === 'poll') {
+        if (opts.length > 4) warnings.push(`Only the first 4 of ${opts.length} options fit`);
+        if (opts.length < 2) warnings.push('A poll needs at least 2 options');
+        return { ...op, type: 'poll', answers: [...opts.slice(0, 4).map((o) => o.text.slice(0, 100)), '', '', '', ''].slice(0, 4), other: yes(meta.other) };
+      }
+      if (type === 'scale' || type === 'nps') {
+        const labels = (meta.labels ? splitList(meta.labels) : opts.map((o) => o.text)).map((l) => l.slice(0, 40));
+        const nps = type === 'nps' || /nps|0\s*-\s*10/i.test(meta.labels || '');
+        if (nps) return { ...op, type: 'scale', mode: 'nps', ends: labels.length === 2 ? labels : [...NPS_ENDS] };
+        if (labels.length && labels.length !== 5) warnings.push(`A scale has 5 points; ${labels.length} labels were found, so the usual ones are used`);
+        return { ...op, type: 'scale', mode: 'likert', labels: labels.length === 5 ? labels : [...LIKERT] };
+      }
+      if (type === 'drop' && !base.imageRef) warnings.push('A Drop pin question needs a picture');
+      return { ...op, type };
+    }
     // Puzzle: "Order: A > B > C" or type puzzle with the items listed in the right order
     if (type === 'puzzle' || meta.order) {
       let items = meta.order ? meta.order.split(/\s*(?:>|→|->|\||;|,)\s*/).map(clean).filter(Boolean) : opts.map((o) => o.text);
@@ -481,6 +515,10 @@
       if (q.type === 'puzzle') out.push(`Order: ${q.answers.join(' > ')}`);
       if (q.type === 'slider') out.push(`Answer: ${q.answer}${q.unit ? ` ${q.unit}` : ''}`, `Range: ${q.min}-${q.max}`, `Step: ${q.step}`, `Margin: ${MARGIN_TXT[q.margin] || '±10%'}`);
       if (q.type === 'pin') out.push('Type: pin   (its areas are kept in quiz.json)');
+      if (q.type === 'poll') { out.push('Type: poll'); q.answers.forEach((a, k) => out.push(`${'abcd'[k]}) ${a}`)); if (q.other) out.push('Other: yes'); }
+      if (q.type === 'scale') out.push(q.mode === 'nps' ? 'Type: nps' : 'Type: scale', `Labels: ${q.labels.join(' | ')}`);
+      if (['cloud', 'open', 'brain', 'drop'].includes(q.type)) out.push(`Type: ${{ cloud: 'word cloud', open: 'open-ended', brain: 'brainstorm', drop: 'drop pin' }[q.type]}`);
+      if (OPINION.includes(q.type) && q.anon) out.push('Anonymous: yes');
       out.push(`Time: ${q.time}`);
       if (q.image) out.push(`Image: ${q.image}`);
       out.push('');
@@ -509,6 +547,9 @@
       if (type === 'puzzle') o.answers = q.answers;
       if (type === 'slider') Object.assign(o, { min: q.min, max: q.max, step: q.step, answer: q.answer, unit: q.unit || '', margin: q.margin });
       if (type === 'pin') Object.assign(o, { regions: q.regions, penalty: q.penalty || 0 });
+      if (OPINION.includes(type)) o.anon = !!q.anon;
+      if (type === 'poll') Object.assign(o, { answers: q.answers, other: !!q.other });
+      if (type === 'scale') Object.assign(o, { mode: q.mode, labels: q.labels });
       questions.push(o);
     }
     const json = { format: 'blitz-quiz', version: 1, title: quiz.title, exported: new Date().toISOString(), cover, questions };

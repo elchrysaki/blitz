@@ -12,6 +12,23 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 - **Pin:** a title and a picture. Drag on the picture to mark one or more target areas. Players drop map-style pins, up to one per area (tap a pin to remove it). A pin in every area scores full points; each area found earns its share, so finding 2 of 3 areas earns two thirds. An area counts once however many pins are in it, and one pin where two areas overlap finds both. The host can make **stray pins** (outside every area) cost 100, 250 or 500 points each (off by default; a total never drops below zero).
 - **Pins and puzzle orders count without locking in.** What a player has placed is saved as they go; when time runs out it counts, scored as the slowest answer. Locking in earlier earns the speed bonus.
 
+## Collect opinions (forms)
+
+Opinion questions have no right answer and score no points. Mix them into any quiz, or make a quiz of only these and it's a **form**: no scores, no podium, it doesn't count toward lifetime stats, and everyone ends on a thank-you screen.
+
+- **Poll:** 2–4 options. Optionally **Other**: players type their own answer (up to 60 characters) and the host sees every one.
+- **Scale:** five points from *Strongly disagree* to *Strongly agree*, every label editable (e.g. *Never … Always*); results show the count per point and the average. Or **NPS 0–10** with editable end labels: results show the Net Promoter Score (% 9–10 minus % 0–6), the detractor / passive / promoter split, every score and the average.
+- **Drop pin:** everyone drops one pin on a picture; the host sees them all. A pin placed but not locked in counts when time's up.
+- **Word cloud:** one word or short phrase each (25 characters); the same word however it's written counts together and grows.
+- **Open-ended:** up to 250 characters each, shown to the host as cards.
+- **Brainstorm:** (1) everyone adds up to 3 ideas (75 characters each; the same idea twice counts once), (2) the host's screen shows the ideas, duplicates already merged, and the host taps one idea then a similar one to group them, (3) everyone votes for up to 3 favourites in 30 seconds, and the ideas are ranked by votes.
+
+**Names on answers** (editor, shown once a quiz has an opinion question): **Named** (the host sees who answered what), **Anonymous** (the host sees the answers, never who gave them; players are told), or **Mixed** (a *Show who answered* switch on each opinion question). Quiz questions always show names on the leaderboard. Anonymous answers never carry a name to the host's screen or the download, and their order is shuffled.
+
+**Responses download:** at the end, the host can download every answer to every question as a spreadsheet (`.csv`: question, type, name or *Anonymous*, answer, brainstorm votes, and points for quiz questions). Answers are kept with the live game, one storage entry per question (`log:N` in the `GameRoom`), until it ends.
+
+Times now go up to 90 and 120 seconds; Open-ended and Brainstorm start at 60.
+
 **Lobby characters:** every player is an original big-head character in an old-school 3D, 2000s-diva style, drawn by the app as SVG. On the join screen, the dashboard and in the lobby while waiting, players can **design their own**: skin (8 tones), hairstyle (9), hair colour (9), highlights, outfit (6) and its colour, glasses (shades up top, round specs, dark shades, heart shades), an accessory (hoops, star studs, tiara, headphones, necklace, flower clip) and an expression (happy, big grin, joyful, wink, cool, surprised, worried, sleepy), with live previews and a *Surprise me* button. The design is kept in the browser (`localStorage` `blitz:look`) for every game after. It travels as a short code (`~` + one base-36 digit per trait) that the server checks and stores, so the host, the leaderboard and every screen draw the same character. A lobby change (`action: "look"`) updates the host's lobby live. The dashboard's **Your player** card shows your character (tap it to edit) and your usual nickname, which fills in the join screen. A character edited there is also saved for the leaderboard (`POST /api/me/look`), and `/api/me` returns it as `profile.look`, so a browser that lost its copy gets it back. Players who don't design one get a random character the server picks.
 
 **Public and private quizzes:** in the editor, *Who can see it* sets a quiz to **Private** (the default: only you) or **Public**. Public quizzes are listed on **Explore** (`/explore`, `GET /api/public?q=…&sort=popular|new`), where anyone can search them, preview them (`GET /api/public/:id`: titles, types, times and pictures, never the answers) and **save a copy** (`POST /api/public/:id/save`). A copy belongs to whoever saved it: private, with its pictures, and with the answers visible to them; it stays even if the original is deleted or its maker's browser is forgotten, so a public quiz gets passed on. Each save counts as activity for the original (so popular public quizzes don't hit the 15-day cleanup) and is shown as "saved N×". The maker's leaderboard name, if they have one, is shown as "by …".
@@ -113,5 +130,5 @@ Open http://localhost:3000. Players on the same Wi-Fi join through the network l
 - `wrangler.jsonc`: Cloudflare config (assets, D1, Durable Object, cron)
 - `server.py`: the local backend (the same API, using Python's standard library)
 - `public/app.js`: the whole front end (home, dashboard, editor, host, player)
-- `public/import.js`: reads questions from text, Word, Excel, CSV and JSON for the editor's Import (loaded on demand)
+- `public/import.js`: reads questions from text, Word, Excel, CSV and JSON for the editor's Import (loaded on demand). Opinion questions import too (`Type: poll`, `Other: yes`, `Type: scale` + `Labels: a | b | c | d | e`, `Type: nps`, `Type: word cloud`, `Type: open-ended`, `Type: brainstorm`, `Type: drop pin`, `Anonymous: yes`), and downloads keep them exactly.
 - `public/styles.css`: styles
