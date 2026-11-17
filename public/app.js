@@ -163,7 +163,7 @@
 
   let cleanup = null;      // tears down the current view's live connection
   let viewKey = '';        // identifies what's on screen, so live updates can patch instead of redraw
-  let deadline = 0;        // performance.now() timestamp when the current question closes
+  let deadline = 0;        // when the current question closes, on this device's clock (Date.now())
   let duration = 1;
 
   // ---------- helpers ----------
@@ -193,13 +193,91 @@
     toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
   }
 
+  // ---------- the server's clock ----------
+  // Every update carries the server's time. (This device's clock − the server's) as seen on arrival is the
+  // clock difference plus how long the message took; the smallest recent value is the closest to the true
+  // difference. Countdowns end at the server's deadline on that basis, so every phone and the host's
+  // screen hit zero together, and a slow update can't push one device's timer late.
+  const skews = [];
+  function syncClock(serverNow) {
+    if (typeof serverNow !== 'number') return;
+    skews.push(Date.now() - serverNow);
+    if (skews.length > 12) skews.shift();
+  }
+  const skew = () => (skews.length ? Math.min(...skews) : 0);
+  // Point the countdown at a question's end (old servers only sent the time left).
+  function setDeadline(s) {
+    duration = s.question.time * 1000;
+    deadline = typeof s.endsAt === 'number' ? s.endsAt + skew() : Date.now() + s.remaining;
+    queueMicrotask(startTicker);
+  }
+
+  // A live game connection. It reconnects on its own when it goes quiet (a phone that slept, a switch
+  // from Wi-Fi to mobile data), and when the tab comes back to the front. Updates older than the one
+  // on screen are ignored, so a late message can never put a finished question back.
   function live(url, onState, onEnded) {
-    const es = new EventSource(url);
-    es.onmessage = (e) => {
-      const m = JSON.parse(e.data);
-      if (m.t === 'ended') { es.close(); onEnded(); } else onState(m);
+    let es = null, quiet = 0, lastV = 0, done = false;
+    const heard = () => {
+      clearTimeout(quiet);
+      quiet = setTimeout(open, 25000);   // the server sends something at least every 10 s
     };
-    return () => es.close();
+    function open() {
+      if (done) return;
+      es?.close();
+      es = new EventSource(url);
+      es.onmessage = (e) => {
+        heard();
+        let m;
+        try { m = JSON.parse(e.data); } catch { return; }
+        syncClock(m.now);
+        if (m.t === 'ended') { stop(); onEnded(); }
+        else if (m.t === 'state') deliver(m);
+      };
+      heard();
+    }
+    function deliver(m) {
+      if (done || !m) return;
+      if (typeof m.v === 'number') { if (m.v < lastV) return; lastV = m.v; }
+      if (m.preload) preload(m.preload);
+      onState(m);
+    }
+    const back = () => { if (!document.hidden) open(); };   // fresh connection, fresh state
+    function stop() {
+      done = true;
+      clearTimeout(quiet);
+      es?.close();
+      document.removeEventListener('visibilitychange', back);
+    }
+    document.addEventListener('visibilitychange', back);
+    open();
+    stop.deliver = deliver;   // a state from an action's reply goes through the same check
+    return stop;
+  }
+  const preloaded = new Set();
+  function preload(src) {
+    if (preloaded.has(src)) return;
+    preloaded.add(src);
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = src;
+  }
+
+  // Sends a player's or host's action. A failed send is tried again twice (a brief signal drop shouldn't
+  // lose an answer); the reply carries the new state, so the screen moves on without waiting for the stream.
+  async function send(body, conn) {
+    let err;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const r = await api('/api/act', body);
+        if (r.state) conn?.deliver?.(r.state);
+        return r;
+      } catch (e) {
+        err = e;
+        if (!/fetch|network|load|went wrong/i.test(e.message)) break;   // the server said no: don't retry
+        await new Promise((res) => setTimeout(res, 600 * (i + 1)));
+      }
+    }
+    throw err;
   }
 
   // One ticker drives every countdown on screen. It only runs while a countdown is visible
@@ -210,7 +288,7 @@
     const secs = document.querySelectorAll('[data-secs]');
     const bars = document.querySelectorAll('[data-bar]');
     if (!secs.length && !bars.length) return;
-    const left = Math.max(0, deadline - performance.now());
+    const left = Math.max(0, deadline - Date.now());
     secs.forEach((el) => { const v = String(Math.ceil(left / 1000)); if (el.textContent !== v) el.textContent = v; });
     bars.forEach((el) => { el.style.transform = `scaleX(${left / duration})`; });
     if (left > 0 && !document.hidden) ticking = setTimeout(tick, 100);
@@ -1860,7 +1938,14 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
     const local = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
     const origin = local && info.lanUrl ? info.lanUrl : location.origin;
 
-    const act = (s, action) => api('/api/act', { pin: s.pin, token: s.token, action }).catch((e) => toast(e.message));
+    // "Next" says which screen it was pressed on (phase + question), so the server ignores it if the game
+    // has already moved on: Skip ends the question and shows its results, it never jumps past them.
+    const act = (s, action, btn) => {
+      if (btn) { if (btn.disabled) return Promise.resolve(); btn.disabled = true; }
+      return send({ pin: s.pin, token: s.token, action, from: s.phase, q: s.qIndex }, stop)
+        .catch((e) => toast(e.message))
+        .finally(() => { if (btn?.isConnected) btn.disabled = false; });
+    };
 
     function watch(session) {
       if (stop) stop();
@@ -1935,7 +2020,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
     function renderHost(s, session) {
       if (!alive) return;
       s.token = session.token;
-      if (s.phase === 'question') { duration = s.question.time * 1000; deadline = performance.now() + s.remaining; queueMicrotask(startTicker); }
+      if (s.phase === 'question') setDeadline(s);
       const key2 = `host:${s.phase}:${s.qIndex}`;
 
       if (key2 === viewKey) {                       // same screen: patch the live bits only
@@ -1983,7 +2068,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           }
         };
         $('#close').onclick = () => act(s, 'end');
-        $('#next').onclick = () => act(s, 'next');
+        $('#next').onclick = (e) => act(s, 'next', e.currentTarget);
         lobbyBits(s);
         return;
       }
@@ -2044,7 +2129,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
             }), q.type)}
             ${reveal ? repliesPanel(q, s) : ''}
           </main>`;
-        $('#next').onclick = () => act(s, 'next');
+        $('#next').onclick = (e) => act(s, 'next', e.currentTarget);
         return;
       }
 
@@ -2144,7 +2229,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
 
     function renderPlayer(s, session) {
       if (!alive) return;
-      if (s.phase === 'question') { duration = s.question.time * 1000; deadline = performance.now() + s.remaining; queueMicrotask(startTicker); }
+      if (s.phase === 'question') setDeadline(s);
       const key = `play:${s.phase}:${s.qIndex}:${s.choice}`;
       if (key === viewKey) {   // same screen: just keep the lobby head-count fresh
         const wc = $('#wcount');
@@ -2225,8 +2310,8 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           $('#lock').disabled = true;
           box.classList.add('locked');
           buzz(12);
-          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: picks })
-            .catch((err) => { toast(err.message); $('#lock').disabled = false; box.classList.remove('locked'); });
+          send({ pin: session.pin, player: session.player, action: 'answer', choice: picks }, stop)
+            .catch((err) => { toast(err.message); if (!$('#lock')) return; $('#lock').disabled = false; box.classList.remove('locked'); });
         };
         return;
       }
@@ -2298,8 +2383,8 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           const v = pending ?? +range.value;   // mid-glide: lock in where it was heading
           const guess = Math.round((Math.round((v - q.min) / q.step) * q.step + q.min) * 1e6) / 1e6;
           range.step = q.step; range.value = guess; show();
-          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: guess })
-            .catch((err) => { toast(err.message); $('#lock').disabled = false; range.disabled = false; });
+          send({ pin: session.pin, player: session.player, action: 'answer', choice: guess }, stop)
+            .catch((err) => { toast(err.message); if (!$('#lock')) return; $('#lock').disabled = false; range.disabled = false; });
         };
         return;
       }
@@ -2338,8 +2423,8 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           const v = input.value.trim();
           if (!v || $('#lock').disabled) return;
           $('#lock').disabled = true; input.disabled = true; buzz(12);
-          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: v })
-            .catch((err) => { toast(err.message); input.disabled = false; sync(); });
+          send({ pin: session.pin, player: session.player, action: 'answer', choice: v }, stop)
+            .catch((err) => { toast(err.message); if (!input.isConnected) return; input.disabled = false; sync(); });
         };
         $('#typeform').onsubmit = (e) => { e.preventDefault(); send(); };
         $('#lock').onclick = send;
@@ -2429,8 +2514,8 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
         });
         $('#lock').onclick = () => {
           $('#lock').disabled = true; box.classList.add('locked'); buzz(12);
-          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: order })
-            .catch((err) => { toast(err.message); $('#lock').disabled = false; box.classList.remove('locked'); });
+          send({ pin: session.pin, player: session.player, action: 'answer', choice: order }, stop)
+            .catch((err) => { toast(err.message); if (!$('#lock')) return; $('#lock').disabled = false; box.classList.remove('locked'); });
         };
         return;
       }
@@ -2456,8 +2541,11 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           if (!t) return;
           document.querySelectorAll('.tile').forEach((el) => { el.disabled = true; el.classList.toggle('dimmed', el !== t); });
           buzz(12);
-          api('/api/act', { pin: session.pin, player: session.player, action: 'answer', choice: +t.dataset.choice })
-            .catch((err) => toast(err.message));
+          send({ pin: session.pin, player: session.player, action: 'answer', choice: +t.dataset.choice }, stop)
+            .catch((err) => {   // couldn't get through: let them tap again
+              toast(err.message);
+              document.querySelectorAll('.tiles .tile').forEach((el) => { el.disabled = false; el.classList.remove('dimmed'); });
+            });
         };
         return;
       }

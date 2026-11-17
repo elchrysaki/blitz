@@ -687,6 +687,7 @@ export class GameRoom extends DurableObject {
     this.s = null;          // the game; persisted, so it survives the object being evicted
     this.subs = new Set();  // open event streams: {pid (null = host), writer}
     this.ping = null;
+    this.v = Date.now();     // state version: screens ignore anything older than what they have
     ctx.blockConcurrencyWhile(async () => {
       this.s = (await ctx.storage.get("s")) ?? null;
     });
@@ -754,13 +755,18 @@ export class GameRoom extends DurableObject {
       const pid = text(body.player);
       if (!Object.hasOwn(s.players, pid)) return { status: 403, body: { error: "You're not in this game" } };
       await (body.action === "answer" ? this.answer(s.players[pid], body.choice) : this.draft(s.players[pid], body.choice));
+      // The player's screen as it is now, so it can move on without waiting for the stream.
+      return { status: 200, body: { ok: true, state: this.s ? this.state(pid) : null } };
     } else if (body.action === "next" || body.action === "end") {
       if (body.token !== s.token) return { status: 403, body: { error: "Only the host can do that" } };
-      await (body.action === "next" ? this.advance() : this.end(s.gid));
+      if (body.action === "end") await this.end(s.gid);
+      // "Next" names the screen the host pressed it on. If the game has already moved on (time ran out
+      // or everyone answered just before Skip, or a double tap), it does nothing, so the results are never skipped.
+      else if (body.from === undefined || (body.from === s.phase && (body.q === undefined || body.q === s.q))) await this.advance();
+      return { status: 200, body: { ok: true, state: this.s ? this.state(null) : null } };
     } else {
       return { status: 400, body: { error: "Unknown action" } };
     }
-    return { status: 200, body: { ok: true } };
   }
 
   // -- state machine --
@@ -923,14 +929,18 @@ export class GameRoom extends DurableObject {
     const s = this.s;
     const board = this.board();
     const st = {
-      t: "state", phase: s.phase, pin: s.pin, quizTitle: s.quiz.title, cover: s.quiz.cover || null,
+      t: "state", v: this.v, now: Date.now(), phase: s.phase, pin: s.pin, quizTitle: s.quiz.title, cover: s.quiz.cover || null,
       qIndex: s.q, total: s.quiz.questions.length, count: board.length,
     };
+    // The next question's picture, so screens can fetch it before it's needed.
+    const upcoming = s.phase === "lobby" ? 0 : s.phase === "reveal" ? s.q + 1 : -1;
+    if (upcoming >= 0 && s.quiz.questions[upcoming]?.image) st.preload = s.quiz.questions[upcoming].image;
     const live = s.phase === "question" || s.phase === "reveal";
     const q = live ? s.quiz.questions[s.q] : null;
     if (live) {
       st.question = this.question();
       st.remaining = Math.max(0, Math.floor(q.time * 1000 - (Date.now() - s.started)));
+      st.endsAt = s.started + q.time * 1000;   // server clock; screens line their countdown up with "now"
       if (s.phase === "reveal") {
         if (isPin(q)) st.regions = q.regions;
         else if (q.type === "slider") Object.assign(st, { correct: q.answer, tolerance: MARGINS[q.margin] * (q.max - q.min) });
@@ -1004,6 +1014,7 @@ export class GameRoom extends DurableObject {
   }
 
   push() {
+    this.v = Math.max((this.v || 0) + 1, Date.now());
     for (const sub of this.subs) this.send(sub, this.state(sub.pid));
   }
 
@@ -1014,8 +1025,9 @@ export class GameRoom extends DurableObject {
         this.ping = null;
         return;
       }
-      for (const sub of this.subs) this.send(sub, ": ping\n\n");
-    }, 15000);
+      const tick = { t: "tick", now: Date.now() };
+      for (const sub of this.subs) this.send(sub, tick);
+    }, 10000);
   }
 
   closeAll() {

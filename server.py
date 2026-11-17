@@ -448,6 +448,7 @@ class Game:
         self.gid = f"{self.pin}-{int(self.created)}"
         self.timer = None
         self.subs = []             # (player_id or None for host, Queue)
+        self.v = int(time.time() * 1000)  # state version: screens ignore anything older than what they have
 
     # -- state machine --
     def advance(self):
@@ -621,14 +622,21 @@ class Game:
 
     def state(self, pid):
         board = self.board()
-        s = {"t": "state", "phase": self.phase, "pin": self.pin, "quizTitle": self.quiz["title"],
+        s = {"t": "state", "v": self.v, "now": int(time.time() * 1000), "phase": self.phase, "pin": self.pin, "quizTitle": self.quiz["title"],
              "cover": image_url(self.quiz_id, self.quiz, COVER),
              "qIndex": self.q, "total": len(self.quiz["questions"]), "count": len(board)}
+        # The next question's picture, so screens can fetch it before it's needed.
+        upcoming = 0 if self.phase == "lobby" else self.q + 1 if self.phase == "reveal" else -1
+        if 0 <= upcoming < len(self.quiz["questions"]):
+            pic = image_url(self.quiz_id, self.quiz, upcoming)
+            if pic:
+                s["preload"] = pic
         live = self.phase in ("question", "reveal")
         if live:
             q = self.quiz["questions"][self.q]
             s["question"] = self.question()
             s["remaining"] = max(0, int(q["time"] * 1000 - (time.time() - self.started) * 1000))
+            s["endsAt"] = int(self.started * 1000 + q["time"] * 1000)  # server clock; screens line up with "now"
             if self.phase == "reveal":
                 if is_pin(q):
                     s["regions"] = q["regions"]
@@ -677,6 +685,7 @@ class Game:
         return s
 
     def push(self):
+        self.v = max(self.v + 1, int(time.time() * 1000))
         for pid, q in self.subs:
             q.put(json.dumps(self.state(pid)))
 
@@ -903,9 +912,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             while True:
                 try:
-                    msg = box.get(timeout=15)
+                    msg = box.get(timeout=10)
                 except queue.Empty:
-                    self.wfile.write(b": ping\n\n")
+                    # A tick with the server clock keeps the connection alive and countdowns lined up.
+                    self.wfile.write(f'data: {{"t":"tick","now":{int(time.time() * 1000)}}}\n\n'.encode())
                     self.wfile.flush()
                     continue
                 if msg is None:
@@ -1090,13 +1100,20 @@ class Handler(BaseHTTPRequestHandler):
             if not p:
                 return self.fail(403, "You're not in this game")
             (g.answer if action == "answer" else g.draft)(p, body.get("choice"))
+            # The player's screen as it is now, so it can move on without waiting for the stream.
+            return self.send_json(200, {"ok": True, "state": g.state(body.get("player")) if g.pin in GAMES else None})
         elif action in ("next", "end"):
             if body.get("token") != g.token:
                 return self.fail(403, "Only the host can do that")
-            g.advance() if action == "next" else g.end()
+            if action == "end":
+                g.end()
+            # "Next" names the screen the host pressed it on; if the game already moved on
+            # (time ran out or everyone answered just before Skip, or a double tap), it does nothing.
+            elif "from" not in body or (body["from"] == g.phase and body.get("q", g.q) == g.q):
+                g.advance()
+            return self.send_json(200, {"ok": True, "state": g.state(None) if g.pin in GAMES else None})
         else:
             return self.fail(400, "Unknown action")
-        self.send_json(200, {"ok": True})
 
 
 class Server(ThreadingHTTPServer):

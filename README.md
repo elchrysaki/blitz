@@ -26,6 +26,10 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 - **Pictures** from the same folder go to the question they name (`Image: …`) or by number (`1.jpg`, `q2.png`, `03-volcano.webp`). One called `cover` becomes the intro picture.
 - A preview lists every question found, its pictures and anything to check (no right answer marked, too many answers) before you add them. Pin questions are skipped, since their areas are drawn in the editor.
 
+**Staying in step:** every update carries the server's clock and the question's end time, so each phone and the host's screen count down to the same moment, however late an update arrives. Screens ignore updates older than the one they show. A live connection that goes quiet for 25 s (a phone that slept, a switch from Wi-Fi to mobile data) reconnects by itself, and so does a tab brought back to the front. A tapped answer is sent again if the signal drops, and the reply moves the screen straight to "Locked in" without waiting for the stream. The next question's picture is fetched during the results, so it's ready when the question starts.
+
+**Skip** ends the question and shows its results; it never jumps to the next question. Host buttons say which screen they were pressed on, so a Skip that lands just after time ran out (or everyone answered), or a double tap, does nothing extra.
+
 **Host results:** after every question the host sees what everyone replied, not just the right answer. Quiz and True / False questions get a bar chart of how many picked each answer (the right one ticked). Every type gets a "Who answered what" list: each player's character, their reply in words (the answer, the typed text, the number, the order they chose, or the areas they found), and the points it earned, best first.
 
 **Old quizzes, new editor:** opening any quiz or unsaved draft in the editor brings it up to the current format, so every question type and option is there, whatever version the quiz was made with.
