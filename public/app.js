@@ -14,18 +14,55 @@
   // ---------- player avatars ----------
   // Original egg-headed characters with a simple, graphic face (solid oval eyes, short brows,
   // a soft nose, a one-line mouth), 2000s hair and accessories, and old-school 3D shading.
-  // Each player gets a random one when they join; the server picks it so every screen matches.
+  // A "look" is either a player's own design, "~" + one base-36 digit per trait (see LOOK), or any
+  // other string (a random look the server picked, or a name), which picks every trait from a hash.
   const AV = {
-    skin: ['#FBDCC4', '#F1BE94', '#D99B6C', '#B47648', '#8C5428', '#5E3A22'],
-    hair: ['#2A1A12', '#4B2C1C', '#7A2331', '#B8732F', '#E6B866', '#EDE3D2', '#151B24'],
-    streak: ['#F4D58D', '#EDE3D2', '#FF7A45', '#D4EEF6'],
-    top: ['#FF5A1F', '#1FA8D2', '#D4EEF6', '#EBC9A5'],
+    skin: ['#FBDCC4', '#F1BE94', '#D99B6C', '#B47648', '#8C5428', '#5E3A22', '#FFE9D6', '#3F2616'],
+    hair: ['#2A1A12', '#4B2C1C', '#7A2331', '#B8732F', '#E6B866', '#EDE3D2', '#151B24', '#1FA8D2', '#FF7A45'],
+    streak: [null, '#F4D58D', '#EDE3D2', '#FF7A45', '#D4EEF6'],
+    top: ['#FF5A1F', '#1FA8D2', '#D4EEF6', '#EBC9A5', '#F6F1E9', '#0A6C93'],
   };
+  // Every trait a player can choose, in the order they're written in a look code, with a name per option.
+  const LOOK = [
+    ['skin', 'Skin', ['Porcelain', 'Peach', 'Honey', 'Caramel', 'Bronze', 'Cocoa', 'Ivory', 'Espresso']],
+    ['hair', 'Hairstyle', ['Side swoop', 'High ponytail', 'Space buns', 'Flip bob', 'Spikes', 'Sparkle cap', 'Curls', 'Short crop', 'Top bun']],
+    ['color', 'Hair colour', ['Black-brown', 'Brunette', 'Cherry', 'Copper', 'Honey blonde', 'Platinum', 'Blue-black', 'Turquoise', 'Coral']],
+    ['streak', 'Highlights', ['None', 'Gold', 'Platinum', 'Coral', 'Ice']],
+    ['outfit', 'Outfit', ['Tube top', 'Velour hoodie', 'Halter', 'Baby tee', 'Denim jacket', 'Jersey']],
+    ['top', 'Outfit colour', ['Vermilion', 'Turquoise', 'Ice', 'Sand', 'Cream', 'Teal']],
+    ['glasses', 'Glasses', ['None', 'Shades up top', 'Round specs', 'Dark shades', 'Heart shades']],
+    ['extra', 'Accessory', ['None', 'Hoops', 'Star studs', 'Tiara', 'Headphones', 'Necklace', 'Flower clip']],
+    ['face', 'Expression', ['Happy', 'Big grin', 'Joyful', 'Wink', 'Cool', 'Surprised', 'Worried', 'Sleepy']],
+  ];
+  const STREAK_STYLES = [0, 1, 4];   // the hairstyles that show highlights
+  const LOOK_RE = /^~[0-9a-z]{9}$/;
+  const encodeLook = (t) => '~' + LOOK.map(([k, , opts]) => ((((t[k] | 0) % opts.length) + opts.length) % opts.length).toString(36)).join('');
   const hashName = (str) => {
     let h = 2166136261;
     for (const ch of str.toLowerCase()) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619); }
     return h >>> 0;
   };
+  function lookTraits(seed) {
+    const key = String(seed || '?').trim();
+    if (LOOK_RE.test(key)) {
+      const t = {};
+      LOOK.forEach(([k, , opts], i) => { t[k] = parseInt(key[i + 1], 36) % opts.length; });
+      return t;
+    }
+    // A random look: the same picks as the original characters, so existing ones keep their look.
+    const h = (trait) => hashName(`${trait}:${key}`);
+    const roll = (trait) => hashName(`${trait}?${key}`) % 100;
+    const hair = h('y') % 7;
+    const g = roll('specs'), a = roll('acc');
+    return {
+      skin: h('s') % 6, hair, color: h('h') % 7, streak: 1 + (h('k') % 4), outfit: h('o') % 4, top: h('t') % 4,
+      glasses: g < 22 && hair !== 4 && hair !== 5 ? 1 : g < 28 ? 2 : g < 31 ? 3 : 0,
+      extra: a < 12 && [0, 1, 3].includes(hair) ? 3 : a < 55 && hair !== 6 ? 1 : a < 62 ? 2 : a < 66 ? 4 : a < 71 ? 5 : a < 75 ? 6 : 0,
+      face: [0, 0, 1, 2, 3, 4, 5, 6, 7][h('x') % 9],
+    };
+  }
+  // A fresh random design, for a player who hasn't made one yet.
+  const randomLook = () => encodeLook(Object.fromEntries(LOOK.map(([k, , opts]) => [k, Math.floor(Math.random() * opts.length)])));
   // Colour helpers for the 3D shading: mix a colour toward white (light) or near-black (shade).
   const mixHex = (hex, to, t) => '#' + [1, 3, 5].map((i) => {
     const a = parseInt(hex.slice(i, i + 2), 16), b = parseInt(to.slice(i, i + 2), 16);
@@ -34,13 +71,13 @@
   const light = (hex, t) => mixHex(hex, '#ffffff', t);
   const shade = (hex, t) => mixHex(hex, '#140c08', t);
 
-  function avatar(seed) {
-    const key = String(seed || '?').trim();   // the random "look" the server picked (or a name, as a fallback)
-    const pick = (arr, trait) => arr[hashName(`${trait}:${key}`) % arr.length];  // each trait from its own hash
-    const chance = (pct, trait) => hashName(`${trait}?${key}`) % 100 < pct;
-    const skin = pick(AV.skin, 's'), hair = pick(AV.hair, 'h'), streak = pick(AV.streak, 'k');
-    const top = pick(AV.top, 't');
-    const style = pick([0, 1, 2, 3, 4, 5, 6], 'y'), outfit = pick([0, 1, 2, 3], 'o');
+  // view: 'face' crops to the head (for pickers), anything else shows head and shoulders.
+  function avatar(seed, view) {
+    const t = lookTraits(seed);
+    const key = encodeLook(t);
+    const skin = AV.skin[t.skin], hair = AV.hair[t.color], top = AV.top[t.top];
+    const streak = AV.streak[t.streak] || 'none';   // "none" leaves the highlight strokes invisible
+    const style = t.hair, outfit = t.outfit;
     const ink = '#1B1210', gold = '#E2A93B', gem = '#1FA8D2';
     const accent = top === '#FF5A1F' ? '#1FA8D2' : '#FF5A1F';   // scrunchies, clips, bandanas: a contrasting pop
 
@@ -53,6 +90,8 @@
       '',
       `<path d="M14 50Q14 16 50 16Q86 16 86 50L86 90Q50 96 14 90Z" fill="${hair}"/>`,
       `<g fill="${hair}"><circle cx="16" cy="42" r="15"/><circle cx="84" cy="42" r="15"/><circle cx="14" cy="66" r="13"/><circle cx="86" cy="66" r="13"/><circle cx="20" cy="86" r="11"/><circle cx="80" cy="86" r="11"/><circle cx="30" cy="22" r="16"/><circle cx="70" cy="22" r="16"/><circle cx="50" cy="15" r="16"/></g>`,
+      '',
+      `<circle cx="50" cy="9" r="11" fill="${hair}"/>`,
     ][style];
 
     // outfit
@@ -65,15 +104,26 @@
       `<path d="M14 120Q14 94 50 94Q86 94 86 120Z" fill="${skin}"/><path d="M30 120L44 96M70 120L56 96" stroke="${top}" stroke-width="3"/><path d="M24 120Q50 100 76 120Z" fill="${top}"/>`,
       // baby tee with a rhinestone star
       `<path d="M14 120Q14 92 50 92Q86 92 86 120Z" fill="${top}"/><path d="M50 103l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8Z" fill="#fff" opacity=".9"/>`,
+      // denim jacket over a tee in the outfit colour
+      `<path d="M14 120Q14 92 50 92Q86 92 86 120Z" fill="#2F6A8C"/><path d="M41 93L50 120L59 93Z" fill="${top}"/>
+       <path d="M37 93L46 108L39 110ZM63 93L54 108L61 110Z" fill="#4C88AA"/>
+       <path d="M24 106Q22 112 22 120M76 106Q78 112 78 120M30 112H40M60 112H70" stroke="#EBC9A5" stroke-opacity=".7" stroke-width="1.2" stroke-dasharray="2 2" fill="none"/>`,
+      // sports jersey with stripes and a number
+      `<path d="M14 120Q14 92 50 92Q86 92 86 120Z" fill="${top}"/><path d="M42 93L50 102L58 93" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>
+       <path d="M19 104L29 98M18 109L29 103M81 104L71 98M82 109L71 103" stroke="#fff" stroke-opacity=".8" stroke-width="2" stroke-linecap="round"/>
+       <text x="50" y="118" text-anchor="middle" font-family="Bricolage Grotesque, sans-serif" font-weight="800" font-size="13" fill="#fff" fill-opacity=".92">1</text>`,
     ][outfit];
 
     // face: simple and graphic — solid oval eyes, short rounded brows, a soft nose, a one-line mouth
     const browColor = hair === '#EDE3D2' ? '#8B6A4A' : shade(hair, 0.15);
-    const eyeStyle = pick([0, 0, 0, 1, 2, 3], 'e');
+    // expressions: [eyes, brows, mouth]
+    const [eyeStyle, browStyle, mouthStyle] = [[0, 0, 0], [0, 1, 1], [1, 1, 1], [2, 0, 3], [4, 2, 3], [3, 1, 2], [0, 3, 4], [5, 0, 0]][t.face];
     const eye = (cx, right) => {
       if (eyeStyle === 1 || (eyeStyle === 2 && right)) // happy arc (both), or a wink (right eye)
         return `<path d="M${cx - 4.6} 58.5Q${cx} 52.5 ${cx + 4.6} 58.5" fill="none" stroke="${ink}" stroke-width="2.8" stroke-linecap="round"/>`;
       if (eyeStyle === 3) return `<circle cx="${cx}" cy="57" r="2.8" fill="${ink}"/>`;  // dot eyes
+      if (eyeStyle === 4) return `<path d="M${cx - 4.4} 56H${cx + 4.4}" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/><ellipse cx="${cx}" cy="58.2" rx="3.4" ry="2.4" fill="${ink}"/>`;  // half-lidded
+      if (eyeStyle === 5) return `<path d="M${cx - 4.4} 57.5Q${cx} 61 ${cx + 4.4} 57.5" fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/>`;  // closed, sleepy
       return `<ellipse cx="${cx}" cy="57" rx="3.4" ry="4.7" fill="${ink}"/><circle cx="${cx + 1.1}" cy="55.2" r="1.25" fill="#fff"/>`;
     };
     const brows = [
@@ -81,14 +131,17 @@
       'M32 46Q37.5 41.5 43 45M57 45Q62.5 41.5 68 46',           // raised
       'M32 45L43 48M57 48L68 45',                               // determined
       'M32 48L43 45.5M57 45.5L68 48',                           // worried
-    ][pick([0, 0, 1, 2, 3], 'b')];
+    ][browStyle];
     const mouths = [
       `<path d="M42.5 71.5Q50 77.5 57.5 71.5" fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/>`,
       `<path d="M41.5 70.5Q50 81 58.5 70.5Z" fill="${ink}"/><path d="M43.4 71.2Q50 73.6 56.6 71.2L56 72.8Q50 75 44 72.8Z" fill="#fff"/>`,
       `<ellipse cx="50" cy="73" rx="2.8" ry="3.4" fill="${ink}"/>`,
       `<path d="M44 73.5Q51 75.5 57 71" fill="none" stroke="${ink}" stroke-width="2.6" stroke-linecap="round"/>`,
-    ][pick([0, 0, 1, 1, 2, 3], 'm')];
+      `<path d="M42.5 73.5Q45 71 47.5 73.5Q50 76 52.5 73.5Q55 71 57.5 73.5" fill="none" stroke="${ink}" stroke-width="2.4" stroke-linecap="round"/>`,
+    ][mouthStyle];
     const nose = `<path d="M47.6 64.5Q50 67 52.4 64.5" fill="none" stroke="${shade(skin, 0.35)}" stroke-width="2" stroke-linecap="round"/>`;
+    const sweat = t.face === 6 ? `<path d="M76 40Q79 45 76 47.5Q73 45 76 40Z" fill="#D4EEF6" stroke="${gem}" stroke-width=".8"/>` : '';
+    const zzz = t.face === 7 ? `<text x="80" y="36" font-family="Bricolage Grotesque, sans-serif" font-weight="800" font-size="10" fill="#D4EEF6">z</text><text x="87" y="27" font-family="Bricolage Grotesque, sans-serif" font-weight="800" font-size="7" fill="#D4EEF6">z</text>` : '';
 
     // hair in front of the face
     const front = [
@@ -103,14 +156,35 @@
       `<path d="M14 46Q15 11 50 11Q85 11 86 46Q50 30 14 46Z" fill="${accent}"/><g fill="#fff" opacity=".75"><circle cx="34" cy="24" r="1.6"/><circle cx="50" cy="18" r="1.6"/><circle cx="66" cy="24" r="1.6"/><circle cx="42" cy="32" r="1.3"/><circle cx="58" cy="32" r="1.3"/></g>
        <circle cx="85" cy="44" r="4.6" fill="${accent}"/><path d="M87 46L95 54L90 55Z" fill="${accent}"/>`,
       `<path d="M20 44Q50 20 80 44" fill="none" stroke="${accent}" stroke-width="5" stroke-linecap="round"/>`,
+      `<path d="M16 50Q15 15 50 14Q85 15 84 50Q81 31 67 28Q50 23 33 28Q19 31 16 50Z" fill="${hair}"/><path d="M16 50L16 60Q18 56 19 50ZM84 50L84 60Q82 56 81 50Z" fill="${hair}"/>`,
+      `<path d="M16 50Q16 15 50 15Q84 15 84 50Q78 27 50 26Q22 27 16 50Z" fill="${hair}"/><rect x="43" y="16" width="14" height="5" rx="2.5" fill="${accent}"/>`,
     ][style];
 
-    // extras
-    const hoops = chance(55, 'hoop') && style !== 6 ? `<g fill="none" stroke="${gold}" stroke-width="2.4"><circle cx="13" cy="72" r="7"/><circle cx="87" cy="72" r="7"/></g>` : '';
-    const shades = chance(25, 'shades') && style !== 5 && style !== 4
-      ? `<g><rect x="28" y="22" width="19" height="11" rx="5.5" fill="${pick(['#FF7A45', '#1FA8D2', '#D4EEF6'], 'lens')}" opacity=".85" stroke="${ink}" stroke-width="1.8"/><rect x="53" y="22" width="19" height="11" rx="5.5" fill="${pick(['#FF7A45', '#1FA8D2', '#D4EEF6'], 'lens')}" opacity=".85" stroke="${ink}" stroke-width="1.8"/><path d="M47 27H53" stroke="${ink}" stroke-width="1.8"/></g>` : '';
-    const tiara = !shades && chance(14, 'tiara') && [0, 1, 3].includes(style)
-      ? `<path d="M36 20L40 11L45 17L50 6L55 17L60 11L64 20Z" fill="#F6F1E9" stroke="${ink}" stroke-width="1.4" stroke-linejoin="round"/><circle cx="50" cy="15" r="2.2" fill="${gem}"/>` : '';
+    // glasses
+    const lens = (c) => `fill="${c}" opacity=".85" stroke="${ink}" stroke-width="1.8"`;
+    const heart = (cx) => `<path d="M${cx} 63.5C${cx - 3} 61 ${cx - 9} 57.5 ${cx - 9} 53.5C${cx - 9} 50 ${cx - 5} 48.5 ${cx} 52C${cx + 5} 48.5 ${cx + 9} 50 ${cx + 9} 53.5C${cx + 9} 57.5 ${cx + 3} 61 ${cx} 63.5Z" fill="#FF5A1F" fill-opacity=".85" stroke="${ink}" stroke-width="1.6" stroke-linejoin="round"/>`;
+    const glasses = [
+      '',
+      `<g><rect x="28" y="22" width="19" height="11" rx="5.5" ${lens('#FF7A45')}/><rect x="53" y="22" width="19" height="11" rx="5.5" ${lens('#1FA8D2')}/><path d="M47 27H53" stroke="${ink}" stroke-width="1.8"/></g>`,
+      `<g fill="#fff" fill-opacity=".14" stroke="${ink}" stroke-width="2"><circle cx="38" cy="57" r="8.5"/><circle cx="62" cy="57" r="8.5"/></g><path d="M46.5 56Q50 53.5 53.5 56M29.5 55L18 52.5M70.5 55L82 52.5" fill="none" stroke="${ink}" stroke-width="2"/>`,
+      `<path d="M27 51H48Q48 64 39 64Q29 64 27 51ZM52 51H73Q71 64 61 64Q52 64 52 51Z" fill="#140c08" stroke="${ink}" stroke-width="1.6" stroke-linejoin="round"/><path d="M48 52.5H52M27 51.5L17 50M73 51.5L83 50" stroke="${ink}" stroke-width="2"/>
+       <path d="M31 54L36 54M56 54L61 54" stroke="#fff" stroke-opacity=".55" stroke-width="2" stroke-linecap="round"/>`,
+      `${heart(38)}${heart(62)}<path d="M47 54H53M29 53L18 51M71 53L82 51" stroke="${ink}" stroke-width="1.8"/>`,
+    ][t.glasses];
+
+    // accessories
+    const star = (x, y, r) => `<path d="M${x} ${y - r}L${x + r * .29} ${y - r * .4}L${x + r * .95} ${y - r * .31}L${x + r * .47} ${y + r * .15}L${x + r * .59} ${y + r * .81}L${x} ${y + r * .5}L${x - r * .59} ${y + r * .81}L${x - r * .47} ${y + r * .15}L${x - r * .95} ${y - r * .31}L${x - r * .29} ${y - r * .4}Z" fill="${gold}" stroke="${ink}" stroke-width=".8" stroke-linejoin="round"/>`;
+    const extraBack = t.extra === 4 ? `<path d="M10 58Q10 4 50 4Q90 4 90 58" fill="none" stroke="#1B1210" stroke-width="6" stroke-linecap="round"/><path d="M10 58Q10 4 50 4Q90 4 90 58" fill="none" stroke="${accent}" stroke-width="3" stroke-linecap="round"/>` : '';
+    const extra = [
+      '',
+      `<g fill="none" stroke="${gold}" stroke-width="2.4"><circle cx="13" cy="72" r="7"/><circle cx="87" cy="72" r="7"/></g>`,
+      `${star(15.5, 66, 4.6)}${star(84.5, 66, 4.6)}`,
+      `<path d="M36 20L40 11L45 17L50 6L55 17L60 11L64 20Z" fill="#F6F1E9" stroke="${ink}" stroke-width="1.4" stroke-linejoin="round"/><circle cx="50" cy="15" r="2.2" fill="${gem}"/>`,
+      `<rect x="5" y="48" width="12" height="20" rx="6" fill="${accent}" stroke="${ink}" stroke-width="1.6"/><rect x="83" y="48" width="12" height="20" rx="6" fill="${accent}" stroke="${ink}" stroke-width="1.6"/>
+       <path d="M8 53V63M92 53V63" stroke="#fff" stroke-opacity=".5" stroke-width="2" stroke-linecap="round"/>`,
+      `<path d="M38 93Q50 102 62 93" fill="none" stroke="${gold}" stroke-width="2"/><path d="M50 98.5L53 102L50 105.5L47 102Z" fill="${gem}" stroke="${ink}" stroke-width=".8"/>`,
+      `<g transform="translate(74 27)"><g fill="${accent}" stroke="${ink}" stroke-width=".9"><circle cx="0" cy="-6" r="4.4"/><circle cx="5.7" cy="-1.9" r="4.4"/><circle cx="3.5" cy="4.9" r="4.4"/><circle cx="-3.5" cy="4.9" r="4.4"/><circle cx="-5.7" cy="-1.9" r="4.4"/></g><circle r="3.2" fill="#F4D58D" stroke="${ink}" stroke-width=".9"/></g>`,
+    ][t.extra];
 
     // Old-school 3D: every surface is lit from the top left, hair gets a gloss streak, the head casts a shadow.
     const id = hashName(key).toString(36);
@@ -124,15 +198,15 @@
     const faceShine = `<ellipse cx="37" cy="38" rx="9" ry="6" fill="url(#gl${id})" opacity=".55"/>`;
     const chinShadow = `<ellipse cx="50" cy="93" rx="17" ry="4.5" fill="#140c08" opacity=".22"/>`;
 
-    const svg = `<svg class="buddy-art" viewBox="0 0 100 120" aria-hidden="true">${defs}
+    const svg = `<svg class="buddy-art" viewBox="${view === 'face' ? '4 0 92 96' : '0 0 100 120'}" aria-hidden="true">${defs}
       ${back}${outfits}
       <rect x="43" y="82" width="14" height="14" rx="5" fill="${skin}"/>
       <circle cx="16.5" cy="58" r="6" fill="${skin}"/><circle cx="83.5" cy="58" r="6" fill="${skin}"/>
-      ${chinShadow}
+      ${chinShadow}${t.extra === 5 ? extra : ''}
       <path d="M50 15C73 15 85 33 85 54C85 76 70 92 50 92C30 92 15 76 15 54C15 33 27 15 50 15Z" fill="${skin}"/>${faceShine}
-      ${hoops}
+      ${[1, 2].includes(t.extra) ? extra : ''}
       <ellipse cx="30" cy="67" rx="5.4" ry="3" fill="#FF5A1F" opacity=".2"/><ellipse cx="70" cy="67" rx="5.4" ry="3" fill="#FF5A1F" opacity=".2"/>
-      <path d="${brows}" fill="none" stroke="${browColor}" stroke-width="3.2" stroke-linecap="round"/>${eye(38, false)}${eye(62, true)}${nose}${mouths}${front}${gloss}${shades}${tiara}
+      <path d="${brows}" fill="none" stroke="${browColor}" stroke-width="3.2" stroke-linecap="round"/>${eye(38, false)}${eye(62, true)}${nose}${mouths}${sweat}${front}${gloss}${extraBack}${glasses}${[3, 4, 6].includes(t.extra) ? extra : ''}${zzz}
     </svg>`;
     // swap the flat fills for the shaded ones
     return svg.replaceAll(`fill="${skin}"`, `fill="url(#sk${id})"`)
@@ -149,7 +223,92 @@
     </svg>`;
   const waitingChip = (text) => `<p class="waiting-chip" role="status">${HOURGLASS}<span>${text}<span class="dots"></span></span></p>`;
   const waitCount = (n) => (n > 1 ? `You and ${n - 1} other${n === 2 ? '' : 's'} are in` : 'You’re the first one here');
-  const buddy = (name, look, cls = '') => `<div class="buddy ${cls}" data-name="${esc(name)}">${avatar(look || name)}<span>${esc(name)}</span></div>`;
+  const buddy = (name, look, cls = '') => `<div class="buddy ${cls}" data-name="${esc(name)}" data-look="${esc(look || '')}">${avatar(look || name)}<span>${esc(name)}</span></div>`;
+
+  // ---------- character editor ----------
+  // Your own design is kept in this browser (localStorage) and used for every game you join.
+  const MY_LOOK = 'blitz:look';
+  const myLook = () => { const l = store.get(MY_LOOK, localStorage); return typeof l === 'string' && LOOK_RE.test(l) ? l : null; };
+  const LOOK_TABS = [
+    ['Face', ['skin', 'face']],
+    ['Hair', ['hair', 'color', 'streak']],
+    ['Outfit', ['outfit', 'top']],
+    ['Extras', ['glasses', 'extra']],
+  ];
+  // Colour traits get swatches; the rest get little previews of your character wearing each option.
+  const LOOK_SWATCH = { skin: AV.skin, color: AV.hair, streak: AV.streak, top: AV.top };
+  const LOOK_FACE = new Set(['face', 'hair', 'glasses']);   // previews cropped to the head
+
+  // Opens the editor; resolves to the new look, or null if closed without saving.
+  function editLook(start) {
+    return new Promise((resolve) => {
+      let t = lookTraits(start || myLook() || randomLook());
+      let tab = 0;
+      const back = document.createElement('div');
+      back.className = 'sheet-back';
+      back.innerHTML = `
+        <div class="sheet look-sheet" role="dialog" aria-modal="true" aria-labelledby="lk-h">
+          <header class="sheet-head"><h2 id="lk-h">Your character</h2><button class="sheet-x" aria-label="Close">✕</button></header>
+          <div class="look-stage"><div class="look-me" id="lkMe"></div>
+            <button class="btn small look-dice" id="lkDice" type="button" aria-label="Random look">🎲 Surprise me</button></div>
+          <div class="look-tabs seg" role="tablist">${LOOK_TABS.map(([n], i) => `<button type="button" role="tab" data-tab="${i}">${n}</button>`).join('')}</div>
+          <div class="sheet-body look-body" id="lkBody"></div>
+          <footer class="sheet-foot"><button class="btn" id="lkCancel" type="button">Cancel</button><button class="btn primary" id="lkDone" type="button">Done</button></footer>
+        </div>`;
+      const q = (sel) => back.querySelector(sel);
+      const me = () => { q('#lkMe').innerHTML = avatar(encodeLook(t)); };
+      const opt = (k, i, name) => {
+        const on = t[k] === i;
+        const sw = LOOK_SWATCH[k];
+        const inner = sw ? `<i class="sw ${sw[i] ? '' : 'sw-none'}" style="${sw[i] ? `--c:${sw[i]}` : ''}"></i>`
+          // (expression previews leave off glasses that would cover the eyes)
+          : avatar(encodeLook({ ...t, [k]: i, ...(k === 'face' && t.glasses > 1 ? { glasses: 0 } : {}) }), LOOK_FACE.has(k) ? 'face' : '');
+        return `<button type="button" class="${sw ? 'lk-sw' : 'lk-opt'} ${on ? 'on' : ''}" data-k="${k}" data-i="${i}" aria-pressed="${on}" title="${esc(name)}" aria-label="${esc(name)}">${inner}${sw ? '' : `<small>${esc(name)}</small>`}</button>`;
+      };
+      const panel = () => {
+        const seg = q('.look-tabs'), from = thumbAt(seg);
+        back.querySelectorAll('[data-tab]').forEach((b, i) => { b.classList.toggle('on', i === tab); b.setAttribute('aria-selected', i === tab); });
+        placeThumb(seg, from);   // the app's sliding pill
+        q('#lkBody').innerHTML = LOOK_TABS[tab][1].map((k) => {
+          const [, label, names] = LOOK.find(([key]) => key === k);
+          const note = k === 'streak' && !STREAK_STYLES.includes(t.hair) ? '<em>show on the swoop, ponytail and spikes</em>' : '';
+          return `<section class="lk-group"><p class="eyebrow">${label} ${note}</p>
+            <div class="${LOOK_SWATCH[k] ? 'lk-swatches' : 'lk-grid'}">${names.map((n, i) => opt(k, i, n)).join('')}</div></section>`;
+        }).join('');
+      };
+      const finish = (val) => {
+        document.documentElement.classList.remove('sheet-open');
+        back.classList.add('out');
+        document.removeEventListener('keydown', key);
+        setTimeout(() => back.remove(), 180);
+        resolve(val);
+      };
+      const key = (e) => { if (e.key === 'Escape') finish(null); };
+      document.addEventListener('keydown', key);
+      back.addEventListener('pointerdown', (e) => { if (e.target === back) finish(null); });
+      q('.sheet-x').onclick = q('#lkCancel').onclick = () => finish(null);
+      q('#lkDone').onclick = () => {
+        const look = encodeLook(t);
+        store.set(MY_LOOK, look, localStorage);
+        finish(look);
+      };
+      q('#lkDice').onclick = () => { t = lookTraits(randomLook()); me(); panel(); bump(q('#lkMe')); buzz(10); };
+      q('.look-tabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) { tab = +b.dataset.tab; panel(); } };
+      q('#lkBody').onclick = (e) => {
+        const b = e.target.closest('[data-k]');
+        if (!b) return;
+        t = { ...t, [b.dataset.k]: +b.dataset.i };
+        const scroll = q('#lkBody').scrollTop;
+        me(); panel();
+        q('#lkBody').scrollTop = scroll;
+        buzz(6);
+      };
+      document.body.append(back);
+      document.documentElement.classList.add('sheet-open');
+      me(); panel();
+      q('#lkDone').focus({ preventScroll: true });
+    });
+  }
 
   const PIN = '<svg viewBox="0 0 24 32" aria-hidden="true"><path d="M12 0C5.4 0 0 5.2 0 11.7 0 20.4 12 32 12 32s12-11.6 12-20.3C24 5.2 18.6 0 12 0z"/><circle cx="12" cy="11.5" r="4.5"/></svg>';
   const regionEl = (r, i, del) => `<div class="region" style="left:${pct(r.x)};top:${pct(r.y)};width:${pct(r.w)};height:${pct(r.h)}">${
@@ -596,6 +755,49 @@
     } catch (err) { if (alive && !cached) toast(err.message); }
   }
 
+  // Your player: the character you join games as and your usual nickname (both kept in this browser).
+  const MY_NICK = 'blitz:nick';
+  const myNick = () => { const n = store.get(MY_NICK, localStorage); return typeof n === 'string' ? n : ''; };
+  function profileCard(me) {
+    // A character saved on the server (from a design made here earlier) fills in if this browser lost its copy.
+    if (!myLook() && me.profile?.look) store.set(MY_LOOK, me.profile.look, localStorage);
+    const look = myLook();
+    return `
+      <section class="dash-sec">
+        <div class="card profile">
+          <button class="prof-art ${look ? '' : 'unset'}" id="profArt" type="button" aria-label="Edit your character">
+            ${avatar(look || 'blitz-you')}<span class="prof-pen" aria-hidden="true">✎</span></button>
+          <div class="prof-main">
+            <p class="eyebrow">Your player</p>
+            <input class="prof-nick" id="profNick" maxlength="16" autocomplete="off" placeholder="Your nickname" aria-label="Your nickname" value="${esc(myNick())}">
+            <p class="hint">${look ? 'This is you in every game you join. Tap your character to change it.' : 'Design the character you’ll play as: skin, hair, outfit, glasses, accessories and expression.'}</p>
+            <button class="btn small ${look ? '' : 'primary'}" id="profEdit" type="button">${look ? 'Edit character' : 'Make your character →'}</button>
+          </div>
+        </div>
+      </section>`;
+  }
+  function wireProfile() {
+    const art = $('#profArt');
+    if (!art) return;
+    const edit = async () => {
+      const look = await editLook(myLook());
+      if (!look || !art.isConnected) return;
+      art.classList.remove('unset');
+      art.innerHTML = `${avatar(look)}<span class="prof-pen" aria-hidden="true">✎</span>`;
+      bump(art);
+      $('#profEdit').textContent = 'Edit character';
+      $('#profEdit').classList.remove('primary');
+      api('/api/me/look', { look }).catch(() => {});   // the leaderboard shows it too
+    };
+    art.onclick = $('#profEdit').onclick = edit;
+    const nick = $('#profNick');
+    nick.onchange = nick.onblur = () => {
+      const v = nick.value.replace(/\s+/g, ' ').trim().slice(0, 16);
+      nick.value = v;
+      if (v) store.set(MY_NICK, v, localStorage); else store.del(MY_NICK, localStorage);
+    };
+  }
+
   // Lifetime stats on the dashboard: rating and world rank up top, the counts beside them.
   function statsCard(st) {
     if (!st || !st.games) return `
@@ -807,6 +1009,7 @@
           <h1 class="display">${me.quizzes.length || me.played.length || me.stats?.games ? 'Welcome <em>back.</em>' : 'Nothing here <em>yet.</em>'}</h1>
           <p class="lede">No sign-in needed. This browser is remembered for 7 days after your last visit, and each visit adds another 7. Your stats stay as long as it’s remembered.</p>
         </section>
+        ${profileCard(me)}
         ${statsCard(me.stats)}
         <section class="dash-sec">
           <div class="sec-head"><h2>My quizzes</h2><span class="count">${me.quizzes.length}</span><span class="grow"></span><a class="ghost" href="/explore" data-link>Explore public →</a></div>
@@ -824,6 +1027,7 @@
         </section>
       </main>`;
 
+    wireProfile();
     app.querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadQuiz(b.dataset.dl, b); });
     app.querySelectorAll('[data-del]').forEach((b) => {
       b.onclick = async () => {
@@ -2173,7 +2377,13 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
       crowd.querySelectorAll('.buddy').forEach((el) => { if (!names.has(el.dataset.name)) el.remove(); });
       const have = new Set([...crowd.querySelectorAll('.buddy')].map((el) => el.dataset.name));
       crowd.querySelector('.crowd-empty')?.remove();
-      for (const p of s.players) if (!have.has(p.name)) crowd.insertAdjacentHTML('beforeend', buddy(p.name, p.look, 'new'));
+      for (const p of s.players) {
+        if (!have.has(p.name)) { crowd.insertAdjacentHTML('beforeend', buddy(p.name, p.look, 'new')); continue; }
+        const el = [...crowd.querySelectorAll('.buddy')].find((b) => b.dataset.name === p.name);
+        if (el && el.dataset.look !== (p.look || '')) {   // they changed their look: a fresh hop with the new one
+          el.outerHTML = buddy(p.name, p.look, 'new');
+        }
+      }
       if (!s.players.length) {
         crowd.innerHTML = `<div class="crowd-empty"><div class="buddy ghost-buddy"></div><div class="buddy ghost-buddy"></div><div class="buddy ghost-buddy"></div>
           <p class="waiting">Waiting for players<span class="dots"></span></p></div>`;
@@ -2195,17 +2405,28 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
 
     const solo = (inner) => { app.innerHTML = `<main class="page center">${nav()}<div class="solo">${inner}</div></main>`; };
 
+    const pendingLook = randomLook();   // shown (and used) until you design your own
     function joinForm(note) {
       viewKey = 'join';
       solo(`
         <p class="eyebrow">${note || 'Join a game'}</p>
         <h1 class="display">You’re almost <em>in.</em></h1>
+        <button class="look-pick" id="lookBtn" type="button" aria-label="Customise your character">
+          <span class="look-pick-art" id="lookArt">${avatar(myLook() || pendingLook, 'face')}</span>
+          <span class="look-pick-cta">${myLook() ? 'Change your character' : 'Make your character'} →</span></button>
         <form class="joinform" id="join">
           <input id="pin" inputmode="numeric" autocomplete="off" maxlength="7" placeholder="Game PIN" value="${esc(urlPin)}" aria-label="Game PIN">
-          <input id="name" autocomplete="off" maxlength="16" placeholder="Nickname" aria-label="Nickname">
+          <input id="name" autocomplete="off" maxlength="16" placeholder="Nickname" aria-label="Nickname" value="${esc(myNick())}">
           <button class="btn primary">Join game →</button>
         </form>`);
-      $(urlPin ? '#name' : '#pin').focus();
+      $(urlPin && !myNick() ? '#name' : urlPin ? '#join button' : '#pin').focus();
+      $('#lookBtn').onclick = async () => {
+        const look = await editLook(myLook() || pendingLook);
+        if (!look || !alive || !$('#lookArt')) return;
+        $('#lookArt').innerHTML = avatar(look, 'face');
+        $('.look-pick-cta').textContent = 'Change your character →';
+        bump($('#lookArt'));
+      };
       $('#join').onsubmit = async (e) => {
         e.preventDefault();
         const pin = $('#pin').value.replace(/\D/g, '');
@@ -2213,8 +2434,10 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
         if (pin.length !== 6) return toast('A game PIN has 6 digits');
         if (!name) return toast('Pick a nickname');
         try {
-          const session = await api('/api/join', { pin, name });
+          // Your own character if you made one; otherwise the one shown here.
+          const session = await api('/api/join', { pin, name, look: myLook() || pendingLook });
           store.set(sessionKey, session);
+          store.set(MY_NICK, name, localStorage);   // your usual nickname next time
           watch(session);
         } catch (err) { toast(err.message); }
       };
@@ -2230,7 +2453,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
     function renderPlayer(s, session) {
       if (!alive) return;
       if (s.phase === 'question') setDeadline(s);
-      const key = `play:${s.phase}:${s.qIndex}:${s.choice}`;
+      const key = `play:${s.phase}:${s.qIndex}:${s.choice}:${s.phase === 'lobby' ? s.look : ''}`;
       if (key === viewKey) {   // same screen: just keep the lobby head-count fresh
         const wc = $('#wcount');
         if (wc && wc.textContent !== waitCount(s.count)) { wc.textContent = waitCount(s.count); bump(wc); }
@@ -2241,14 +2464,22 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
       const centered = (inner) => { app.innerHTML = `<main class="page center">${nav(me)}<div class="solo">${inner}</div></main>`; };
 
       if (s.phase === 'lobby') {
-        return centered(`
+        centered(`
           <div class="waitroom">
             ${s.cover ? `<img class="intro-img small" src="${s.cover}" alt="" decoding="async">` : ''}
             <div class="me-stage">${buddy(s.name, s.look, 'me new')}</div>
+            <button class="btn small look-edit" id="lookEdit" type="button">Change look</button>
             <h1 class="display">You’re in, <em>${esc(s.name)}.</em></h1>
             ${waitingChip('Waiting for the host to start')}
             <p class="lede"><span id="wcount">${waitCount(s.count)}</span> · PIN ${pinText(s.pin)}</p>
           </div>`);
+        // Change your look while you wait: the host's lobby updates too.
+        $('#lookEdit').onclick = async () => {
+          const look = await editLook(s.look);
+          if (!look || look === s.look) return;
+          send({ pin: session.pin, player: session.player, action: 'look', look }, stop).catch((err) => toast(err.message));
+        };
+        return;
       }
 
       if (s.phase === 'question' && s.choice === null && s.question.type === 'pin') {

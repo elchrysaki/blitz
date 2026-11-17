@@ -34,6 +34,8 @@ const ENC = new TextEncoder();
 const SSE_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-store", "x-accel-buffering": "no" };
 
 const now = () => Date.now() / 1000;
+// A character a player designed: "~" and one base-36 digit per trait (public/app.js draws it).
+const cleanLook = (v) => (typeof v === "string" && /^~[0-9a-z]{9}$/.test(v) ? v : null);
 const token = (bytes) =>
   btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(bytes))))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -343,7 +345,7 @@ async function getMe(env, uid) {
   // One round trip to D1: read the last visit, the quizzes, live games and history,
   // and (only if this browser has anything) extend its 7 days.
   const [userRows, quizRows, liveRows, playedRows] = await env.DB.batch([
-    env.DB.prepare("SELECT seen, games, points, wins, podiums, best FROM users WHERE uid = ?").bind(uid),
+    env.DB.prepare("SELECT seen, name, look, games, points, wins, podiums, best FROM users WHERE uid = ?").bind(uid),
     env.DB.prepare("SELECT id, title, questions, v, cover, updated, plays, last_played, public, saves FROM quizzes WHERE owner = ?").bind(uid),
     env.DB.prepare("SELECT quiz_id FROM games WHERE owner = ? AND done = 0 AND created > ?").bind(uid, t - GAME_TTL),
     env.DB.prepare(
@@ -380,7 +382,9 @@ async function getMe(env, uid) {
     const r = await env.DB.prepare(`SELECT COUNT(*) AS ahead FROM users WHERE games > 0 AND ${RATING} > ?`).bind(stats.rating).first();
     stats.rank = (r?.ahead || 0) + 1;
   }
-  return json({ quizzes, played, stats, expires: any ? t + WEEK : null });
+  // The character this browser designed (it's also kept in the browser); the leaderboard shows it.
+  const profile = { name: user?.name || null, look: cleanLook(user?.look) };
+  return json({ quizzes, played, stats, profile, expires: any ? t + WEEK : null });
 }
 
 // The global leaderboard: the top 50 browsers by Blitz rating, plus where you stand.
@@ -444,6 +448,13 @@ async function handleApi(request, env, url, uid) {
     if (path === "/api/quizzes") return await createQuiz(env, uid, body);
     if (path === "/api/host") return await host(env, uid, body);
     if (path === "/api/join") return await join(env, uid, body);
+    if (path === "/api/me/look") {
+      // A new character from the dashboard: the leaderboard shows it from now on (if this browser is on it).
+      const look = cleanLook(body.look);
+      if (!look) return fail("That look doesn't work", 400);
+      await env.DB.prepare("UPDATE users SET look = ? WHERE uid = ?").bind(look, uid).run();
+      return json({ ok: true });
+    }
     if (path === "/api/act") return await act(env, body);
     const pm = path.match(/^\/api\/public\/([\w-]+)\/save$/);
     if (pm) return await savePublic(env, uid, pm[1]);
@@ -582,7 +593,7 @@ async function join(env, uid, body) {
     ? await env.DB.prepare("SELECT gid FROM games WHERE pin = ? AND created > ?").bind(pin, now() - GAME_TTL).first()
     : null;
   if (!game) return fail("No game with that PIN", 404);
-  const r = await room(env, pin).join(uid, body.name, !!body.rejoin);
+  const r = await room(env, pin).join(uid, body.name, !!body.rejoin, body.look);
   return json(r.body, r.status);
 }
 
@@ -719,7 +730,7 @@ export class GameRoom extends DurableObject {
     return this.persist(); // woke early: just re-arm
   }
 
-  async join(uid, rawName, rejoin) {
+  async join(uid, rawName, rejoin, rawLook) {
     const s = this.s;
     if (!s) return { status: 404, body: { error: "No game with that PIN" } };
     const mine = Object.keys(s.players).find((pid) => s.players[pid].uid === uid);
@@ -733,8 +744,8 @@ export class GameRoom extends DurableObject {
     }
     if (Object.keys(s.players).length >= 200) return { status: 409, body: { error: "This game is full" } };
     const pid = token(12);
-    // A random character for this player, picked once here so every screen shows the same one.
-    const look = token(6);
+    // The character the player designed, or a random one picked once here so every screen shows the same one.
+    const look = cleanLook(rawLook) || token(6);
     s.players[pid] = { uid, name, look, score: 0, choice: null, ms: 0, gained: 0, right: false };
     this.push();
     await this.persist();
@@ -751,6 +762,15 @@ export class GameRoom extends DurableObject {
   async act(body) {
     const s = this.s;
     if (!s) return { status: 404, body: { error: "That game has ended" } };
+    if (body.action === "look") {
+      // A player changing their character (in the lobby, while waiting).
+      const pid = text(body.player);
+      if (!Object.hasOwn(s.players, pid)) return { status: 403, body: { error: "You're not in this game" } };
+      const look = cleanLook(body.look);
+      if (!look) return { status: 400, body: { error: "That look doesn't work" } };
+      if (s.phase !== "final") { s.players[pid].look = look; this.push(); await this.persist(); }
+      return { status: 200, body: { ok: true, state: this.state(pid) } };
+    }
     if (body.action === "answer" || body.action === "draft") {
       const pid = text(body.player);
       if (!Object.hasOwn(s.players, pid)) return { status: 403, body: { error: "You're not in this game" } };

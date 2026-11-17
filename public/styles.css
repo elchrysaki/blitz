@@ -1162,3 +1162,81 @@ html.sheet-open { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) { .menu-pop, .menu-item, .menu-btn i { animation: none !important; transition: none !important; } }
 .menu-pop, .menu-btn { isolation: isolate; }
 @media (max-width: 360px) { .hide-xs { display: none; } }   /* the smallest phones: shorter button labels in the bar */
+
+/* ---------- character editor ---------- */
+.look-pick { display: inline-flex; align-items: center; gap: 14px; margin: 4px auto 14px; padding: 8px 20px 8px 10px; border-radius: 999px;
+  background: var(--solid); border: 1.5px solid var(--edge-soft); color: var(--ink); transition: var(--press), border-color .2s ease; }
+.look-pick:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) { .look-pick:hover { border-color: var(--ice); } .look-pick:hover .buddy-art { transform: rotate(-6deg) translateY(-2px); } }
+.look-pick-art { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; overflow: hidden; background: var(--teal-700); }
+.look-pick-art .buddy-art { width: 58px; height: 60px; margin-top: 6px; transition: transform .3s var(--ease); }
+.look-pick-cta { font-weight: 700; font-size: 16px; }
+.look-edit { margin: 6px auto 0; }
+.waitroom .look-edit { display: flex; }
+
+.look-sheet { width: min(620px, 100%); display: flex; flex-direction: column; height: min(92dvh, 860px); }
+.look-sheet > * { flex: none; }
+.look-sheet > .look-body { flex: 1 1 auto; min-height: 0; }
+.look-stage { position: relative; display: grid; place-items: center; padding: 14px 16px 6px;
+  background: radial-gradient(60% 80% at 50% 70%, rgba(31, 168, 210, .22), transparent 70%); }
+.look-me .buddy-art { width: 132px; height: 158px; filter: drop-shadow(0 10px 14px rgba(1, 16, 28, .45)); }
+.look-dice { position: absolute; right: 16px; bottom: 12px; }
+.look-tabs { justify-self: center; margin: 8px 16px 2px; max-width: calc(100% - 32px); }
+.look-body { gap: 18px; padding-top: 14px; }
+.lk-group { display: grid; gap: 10px; }
+.lk-group .eyebrow em { font-style: normal; text-transform: none; letter-spacing: 0; color: var(--mute); font-weight: 500; margin-left: 6px; }
+.lk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 10px; }
+.lk-opt { display: grid; justify-items: center; gap: 2px; padding: 8px 4px 8px; border-radius: 18px; background: var(--solid);
+  border: 2px solid transparent; color: var(--ink); transition: var(--press), border-color .15s ease, background-color .15s ease; }
+.lk-opt .buddy-art { width: 64px; height: 68px; }
+.lk-opt small { font-size: 12px; font-weight: 600; color: rgba(246, 241, 233, .85); text-align: center; line-height: 1.2; }
+.lk-opt.on { border-color: var(--vermilion); background: var(--solid-hi, var(--solid)); }
+.lk-opt:active, .lk-sw:active { transform: scale(.94); }
+.lk-swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+.lk-sw { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 2px solid transparent; transition: var(--press), border-color .15s ease; }
+.lk-sw .sw { width: 34px; height: 34px; border-radius: 50%; background: var(--c); box-shadow: inset 0 -4px 8px rgba(20, 12, 8, .25), inset 0 3px 6px rgba(255, 255, 255, .3); }
+.lk-sw .sw-none { background: transparent; border: 2px dashed var(--edge); box-shadow: none; position: relative; }
+.lk-sw .sw-none::after { content: ""; position: absolute; inset: 50% 4px auto; height: 2px; background: var(--edge); transform: rotate(-45deg); }
+.lk-sw.on { border-color: var(--vermilion); }
+.lk-opt:focus-visible, .lk-sw:focus-visible, .look-pick:focus-visible { outline: 3px solid var(--ice); outline-offset: 2px; }
+/* Phones: a compact preview beside the dice, so most of the height goes to the options. */
+@media (max-width: 560px) {
+  .look-sheet { height: 94dvh; }
+  .look-stage { grid-template-columns: auto 1fr; justify-items: start; gap: 14px; padding: 10px 16px 4px; }
+  .look-me .buddy-art { width: 84px; height: 101px; }
+  .look-dice { position: static; justify-self: end; }
+  .look-tabs { margin: 6px 12px 0; }
+}
+@media (max-height: 620px) {
+  .look-me .buddy-art { width: 64px; height: 77px; }
+  .look-sheet .sheet-head { padding-top: 10px; padding-bottom: 8px; }
+}
+@media (max-width: 480px) {
+  .lk-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
+  .lk-opt .buddy-art { width: 56px; height: 60px; }
+  .look-tabs button { padding: 0 11px; }
+}
+.look-tabs { align-self: center; }
+@media (max-width: 560px) { .look-tabs { align-self: stretch; } .look-tabs button { flex: 1; padding: 0 6px; } }
+
+/* ---------- dashboard: your player ---------- */
+.profile { display: flex; align-items: center; gap: 22px; padding: 20px 24px; }
+.prof-art { position: relative; flex: none; display: grid; place-items: end center; width: 132px; height: 132px; border-radius: 50%; overflow: hidden;
+  background: radial-gradient(70% 70% at 50% 40%, var(--teal-700), var(--solid)); border: 2px solid var(--edge-soft); transition: var(--press), border-color .2s ease; }
+.prof-art .buddy-art { width: 116px; height: 139px; margin-bottom: -22px; transition: transform .35s var(--ease); }
+.prof-art.unset .buddy-art { opacity: .55; filter: grayscale(.6); }
+.prof-pen { position: absolute; right: 10px; bottom: 10px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--vermilion); color: var(--wall); font-size: 16px; box-shadow: 0 4px 10px rgba(1, 16, 28, .4); }
+@media (hover: hover) and (pointer: fine) { .prof-art:hover { border-color: var(--ice); } .prof-art:hover .buddy-art { transform: translateY(-4px) rotate(-4deg); } }
+.prof-art:active { transform: scale(.97); }
+.prof-art:focus-visible, .prof-nick:focus-visible { outline: 3px solid var(--ice); outline-offset: 2px; }
+.prof-main { display: grid; gap: 8px; justify-items: start; min-width: 0; flex: 1; }
+.prof-nick { width: min(320px, 100%); height: 48px; padding: 0 16px; border-radius: 14px; font: 800 22px var(--display); letter-spacing: -.01em;
+  color: var(--ink); background: var(--solid); border: 1.5px solid var(--edge-soft); }
+.prof-nick::placeholder { color: var(--mute); font-weight: 700; }
+.profile .hint { max-width: 46ch; }
+@media (max-width: 560px) {
+  .profile { flex-direction: column; text-align: center; padding: 20px 16px; gap: 14px; }
+  .prof-main { justify-items: center; }
+  .prof-nick { text-align: center; }
+}

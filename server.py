@@ -45,6 +45,7 @@ TIMES = (10, 20, 30, 60)
 SPA = ("/", "/create", "/play", "/dashboard", "/leaderboard", "/explore")
 
 LOCK = threading.RLock()
+LOOK_RE = re.compile(r"~[0-9a-z]{9}")  # a character a player designed (public/app.js draws it)
 GAMES = {}  # pin -> Game
 
 
@@ -876,7 +877,10 @@ class Handler(BaseHTTPRequestHandler):
         stats = stats_of(u)
         if stats["games"]:
             stats["rank"] = 1 + sum(1 for r in ranked_users() if r["rating"] > stats["rating"])
-        self.send_json(200, {"quizzes": mine, "played": played, "stats": stats,
+        st = u.get("stats") or {}
+        look = st.get("look")
+        profile = {"name": st.get("name"), "look": look if isinstance(look, str) and LOOK_RE.fullmatch(look) else None}
+        self.send_json(200, {"quizzes": mine, "played": played, "stats": stats, "profile": profile,
                              "expires": time.time() + WEEK if (u["created"] or u["played"]) else None})
 
     def get_leaderboard(self):
@@ -943,7 +947,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.fail(400, "Bad request")
         path = urlparse(self.path).path
         route = {"/api/quizzes": self.post_quiz, "/api/host": self.post_host,
-                 "/api/join": self.post_join, "/api/act": self.post_act}.get(path)
+                 "/api/join": self.post_join, "/api/act": self.post_act, "/api/me/look": self.post_look}.get(path)
         m = re.match(r"^/api/quizzes/([\w-]+)(/delete)?$", path)
         pm = re.match(r"^/api/public/([\w-]+)/save$", path)
         with LOCK:
@@ -1081,7 +1085,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.fail(409, "This game is full")
         pid = secrets.token_urlsafe(12)
         # A random character for this player, picked once here so every screen shows the same one.
-        g.players[pid] = {"uid": self.uid, "name": name, "look": secrets.token_urlsafe(6),
+        look = body.get("look")
+        if not (isinstance(look, str) and LOOK_RE.fullmatch(look)):
+            look = secrets.token_urlsafe(6)  # no design of their own: a random character, the same on every screen
+        g.players[pid] = {"uid": self.uid, "name": name, "look": look,
                           "score": 0, "choice": None, "ms": 0, "gained": 0, "right": False}
         u = load_user(self.uid)
         u["played"].insert(0, {"id": g.gid, "pin": g.pin, "quizTitle": g.quiz["title"], "name": name,
@@ -1090,11 +1097,33 @@ class Handler(BaseHTTPRequestHandler):
         g.push()
         self.send_json(200, {"pin": g.pin, "player": pid})
 
+    def post_look(self, body):
+        """A new character from the dashboard: the leaderboard shows it from now on (if this browser is on it)."""
+        look = body.get("look")
+        if not (isinstance(look, str) and LOOK_RE.fullmatch(look)):
+            return self.fail(400, "That look doesn't work")
+        u = load_user(self.uid)
+        if u.get("stats"):
+            u["stats"]["look"] = look
+            save_user(self.uid, u)
+        self.send_json(200, {"ok": True})
+
     def post_act(self, body):
         g = GAMES.get(str(body.get("pin", "")))
         if not g:
             return self.fail(404, "That game has ended")
         action = body.get("action")
+        if action == "look":  # a player changing their character while waiting
+            p = g.players.get(body.get("player"))
+            if not p:
+                return self.fail(403, "You're not in this game")
+            look = body.get("look")
+            if not (isinstance(look, str) and LOOK_RE.fullmatch(look)):
+                return self.fail(400, "That look doesn't work")
+            if g.phase != "final":
+                p["look"] = look
+                g.push()
+            return self.send_json(200, {"ok": True, "state": g.state(body.get("player"))})
         if action in ("answer", "draft"):
             p = g.players.get(body.get("player"))
             if not p:
