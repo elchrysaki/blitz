@@ -53,6 +53,8 @@ Times now go up to 90 and 120 seconds; Open-ended and Brainstorm start at 60.
 
 **Old quizzes, new editor:** opening any quiz or unsaved draft in the editor brings it up to the current format, so every question type and option is there, whatever version the quiz was made with.
 
+**Pictures of any shape** (square, tall, wide, panoramas) are never cropped. In fixed-shape frames (dashboard and Explore covers, the editor's picture boxes, the public preview) the whole picture sits over a soft, blurred copy of itself that fills the rest of the frame. In games, pictures keep their own shape, sized to leave room for the answers.
+
 Each quiz can also have an **intro picture**, added under the title in the editor. It's shown whole (never cropped) in the host's preview, in the lobby while players join, and on each player's waiting screen. It's also the quiz's cover on the dashboard; without one, the first question's picture is used.
 
 ## No accounts
@@ -134,3 +136,5 @@ Open http://localhost:3000. Players on the same Wi-Fi join through the network l
 - `public/app.js`: the whole front end (home, dashboard, editor, host, player)
 - `public/import.js`: reads questions from text, Word, Excel, CSV and JSON for the editor's Import (loaded on demand). Opinion questions import too (`Type: poll`, `Other: yes`, `Type: scale` + `Labels: a | b | c | d | e`, `Type: nps`, `Type: word cloud`, `Type: open-ended`, `Type: brainstorm`, `Type: drop pin`, `Anonymous: yes`), and downloads keep them exactly.
 - `public/styles.css`: styles
+- `tests/`: `game_test.py` (a full scripted game against a local or live server), `worker_check.sh` (runs the Cloudflare game code with fake storage), `blitz.py` (client helpers)
+- `CLAUDE.md`: the short working guide for AI-assisted changes (where things are, rules, how to test)

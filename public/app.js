@@ -6,6 +6,10 @@
   const titleHtml = (t) => esc(t).replace(/^[ \t]*[-*•][ \t]+/gm, '• ');
   // A title on several lines reads as a left-aligned block (bullets, a longer question).
   const qt = (t, extra = '') => `<h1 class="qtitle${String(t).includes('\n') ? ' multi' : ''}">${extra}${titleHtml(t)}</h1>`;
+  // A picture in a fixed-shape frame: the whole picture (never cropped) over a soft, blurred copy of
+  // itself that fills the rest, so square, tall, wide and panorama pictures all look intended.
+  const framed = (src, cls = '', lazy = true) => `<img class="pic-bg" src="${src}" alt="" aria-hidden="true" decoding="async"${lazy ? ' loading="lazy"' : ''}>`
+    + `<img class="pic ${cls}" src="${src}" alt="" decoding="async"${lazy ? ' loading="lazy"' : ''}>`;
   const L = 'ABCD';
   const TIMES = [10, 20, 30, 60, 90, 120];
   const fmt = (n) => Number(n).toLocaleString('en-US');
@@ -813,8 +817,8 @@
     const daysLeft = (q) => (q.expires ? Math.max(1, Math.ceil((q.expires - Date.now() / 1000) / 86400)) : 99);
     const quizCard = (q) => `
       <article class="card qtile" data-id="${q.id}">
-        <a class="cover" href="/host/${q.id}" data-link>
-          ${q.cover ? `<img src="${q.cover}" alt="" loading="lazy" decoding="async">` : `<span class="cover-fallback">${esc(q.title.slice(0, 1).toUpperCase())}</span>`}
+        <a class="cover ${q.cover ? 'framed' : ''}" href="/host/${q.id}" data-link>
+          ${q.cover ? framed(q.cover) : `<span class="cover-fallback">${esc(q.title.slice(0, 1).toUpperCase())}</span>`}
           ${q.live ? '<span class="livebadge">Live now</span>' : ''}
           ${q.public ? '<span class="pubbadge">Public</span>' : ''}
         </a>
@@ -972,8 +976,8 @@
     const TYPE_SHORT = { ...TYPE_LABEL, tf: 'True/False' };
     const card = (q) => `
       <article class="card qtile excard" data-id="${q.id}">
-        <button class="cover" data-preview="${q.id}" aria-label="Preview ${esc(q.title)}">
-          ${q.cover ? `<img src="${q.cover}" alt="" loading="lazy" decoding="async">` : `<span class="cover-fallback">${esc(q.title.slice(0, 1).toUpperCase())}</span>`}
+        <button class="cover ${q.cover ? 'framed' : ''}" data-preview="${q.id}" aria-label="Preview ${esc(q.title)}">
+          ${q.cover ? framed(q.cover) : `<span class="cover-fallback">${esc(q.title.slice(0, 1).toUpperCase())}</span>`}
           ${q.mine ? '<span class="pubbadge">Yours</span>' : ''}
         </button>
         <div class="qtile-body">
@@ -1040,7 +1044,7 @@
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pv-h">
           <header class="sheet-head"><h2 id="pv-h">${esc(q.title)}</h2><button class="sheet-x" aria-label="Close">✕</button></header>
           <div class="sheet-body">
-            ${q.cover ? `<img class="pv-cover" src="${q.cover}" alt="">` : ''}
+            ${q.cover ? `<div class="pv-cover framed">${framed(q.cover, '', false)}</div>` : ''}
             <p class="meta">${q.questions} question${q.questions === 1 ? '' : 's'}${q.author ? ` · by ${esc(q.author)}` : ''} · ${q.plays ? `played ${fmt(q.plays)}×` : 'not played yet'}${q.saves ? ` · saved ${fmt(q.saves)}×` : ''}</p>
             <p class="hint">Answers stay hidden until you save your own copy.</p>
             <ol class="imp-list">${q.questionList.map((x, i) => `
@@ -1678,9 +1682,9 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       const pin = q.type === 'pin';
       const regions = q.regions || [];
       const picture = q.image
-        ? `<div class="drop has">
+        ? `<div class="drop has ${pin ? '' : 'framed'}">
              ${pin ? pinBox(q.image, regions.map((r, k) => regionEl(r, k, true)).join(''), 'draw')
-               : `<img src="${q.image}" alt=""><button class="ghost over" data-act="noimg">Remove picture</button>`}
+               : `${framed(q.image, '', false)}<button class="ghost over" data-act="noimg">Remove picture</button>`}
            </div>`
         : `<label class="drop">
              <input type="file" accept="image/*" hidden>
@@ -1873,7 +1877,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
     const coverBox = $('#cover');
     const drawCover = () => {
       coverBox.innerHTML = d.cover
-        ? `<div class="drop has intro"><img src="${d.cover}" alt="">
+        ? `<div class="drop has intro framed">${framed(d.cover, '', false)}
              <button class="ghost over" id="nocover">Remove intro picture</button></div>`
         : `<label class="drop intro">
              <input type="file" accept="image/*" hidden id="coverfile">
