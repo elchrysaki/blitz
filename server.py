@@ -65,7 +65,7 @@ def clean_title(v):
 
 
 def clean_quiz(body, quiz_id=None, old=None):
-    title = str(body.get("title") or "").strip()[:120]
+    title = clean_title(body.get("title"))[:120].strip()  # line breaks kept, like question titles
     if not title:
         raise ValueError("Give your quiz a title")
     raw = body.get("questions")

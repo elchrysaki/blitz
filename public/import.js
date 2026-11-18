@@ -506,7 +506,7 @@
   const MARGIN_TXT = { exact: 'exact', low: '±5%', medium: '±10%', high: '±20%' };
   // The same quiz as text in the format Import reads, so it can be read, edited anywhere, and imported again.
   function toText(j) {
-    const out = [`Title: ${j.title}`, ''];
+    const out = [`Title: ${j.title.replace(/\s*\n\s*/g, ' / ')}`, ''];
     j.questions.forEach((q, i) => {
       out.push(`${i + 1}. ${q.title.replace(/\s*\n\s*/g, ' / ')}`);   // (quiz.json keeps the line breaks)
       if (q.type === 'quiz') q.answers.forEach((a, k) => out.push(`${'abcd'[k]}) ${k === q.correct ? '*' : ''}${a}`));

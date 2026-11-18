@@ -53,7 +53,7 @@ class UserError extends Error {}
 // ---------- quizzes ----------
 
 function cleanQuiz(body, quizId = null, old = null) {
-  const title = text(body.title).trim().slice(0, 120);
+  const title = cleanTitle(body.title).slice(0, 120).trim();   // line breaks kept, like question titles
   if (!title) throw new UserError("Give your quiz a title");
   const raw = body.questions;
   if (!Array.isArray(raw) || raw.length < 1 || raw.length > 50) throw new UserError("Add at least one question");

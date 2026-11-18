@@ -268,7 +268,9 @@ input::placeholder { color: rgba(246, 241, 233, .28); }
 /* ---------- create + preview ---------- */
 .create, .preview { max-width: 820px; }
 .create-head { padding: 40px 0 36px; display: grid; gap: 14px; }
-.title-input { width: 100%; background: none; border: 0; outline: 0; font-family: var(--display); font-size: clamp(40px, 7vw, 76px); font-weight: 800; letter-spacing: -.025em; line-height: 1.05; padding: 0; }
+.title-input { width: 100%; background: none; border: 0; outline: 0; font-family: var(--display); font-size: clamp(40px, 7vw, 76px); font-weight: 800; letter-spacing: -.025em; line-height: 1.05; padding: 0;
+  display: block; color: var(--ink); resize: none; overflow: hidden; white-space: pre-line; }
+.display.multiline { white-space: pre-line; }
 .qcard, .pcard { padding: 26px; margin-bottom: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }  /* never wider than the card */
 .qcard header, .pcard header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .num { font-size: 13px; font-weight: 600; letter-spacing: .14em; color: var(--accent); }

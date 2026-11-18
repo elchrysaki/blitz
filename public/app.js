@@ -237,6 +237,13 @@
   // Your own design is kept in this browser (localStorage) and used for every game you join.
   const MY_LOOK = 'blitz:look';
   const myLook = () => { const l = store.get(MY_LOOK, localStorage); return typeof l === 'string' && LOOK_RE.test(l) ? l : null; };
+  // Everyone has ONE lasting character: their design, or a random one picked the first time it's needed
+  // and kept. So the dashboard, the join screen, the host's lobby and the leaderboard always show the same one.
+  const ensureLook = () => {
+    let l = myLook();
+    if (!l) { l = randomLook(); store.set(MY_LOOK, l, localStorage); }
+    return l;
+  };
   const LOOK_TABS = [
     ['Face', ['skin', 'face']],
     ['Hair', ['hair', 'color', 'streak']],
@@ -881,17 +888,17 @@
   function profileCard(me) {
     // A character saved on the server (from a design made here earlier) fills in if this browser lost its copy.
     if (!myLook() && me.profile?.look) store.set(MY_LOOK, me.profile.look, localStorage);
-    const look = myLook();
+    const look = ensureLook();
     return `
       <section class="dash-sec">
         <div class="card profile">
-          <button class="prof-art ${look ? '' : 'unset'}" id="profArt" type="button" aria-label="Edit your character">
-            ${avatar(look || 'blitz-you')}<span class="prof-pen" aria-hidden="true">✎</span></button>
+          <button class="prof-art" id="profArt" type="button" aria-label="Edit your character">
+            ${avatar(look)}<span class="prof-pen" aria-hidden="true">✎</span></button>
           <div class="prof-main">
             <p class="eyebrow">Your player</p>
             <input class="prof-nick" id="profNick" maxlength="16" autocomplete="off" placeholder="Your nickname" aria-label="Your nickname" value="${esc(myNick())}">
-            <p class="hint">${look ? 'This is you in every game you join. Tap your character to change it.' : 'Design the character you’ll play as: skin, hair, outfit, glasses, accessories and expression.'}</p>
-            <button class="btn small ${look ? '' : 'primary'}" id="profEdit" type="button">${look ? 'Edit character' : 'Make your character →'}</button>
+            <p class="hint">This is you in every game you join, and what the host sees. Tap your character to change skin, hair, outfit, glasses, accessories or expression.</p>
+            <button class="btn small" id="profEdit" type="button">Edit character</button>
           </div>
         </div>
       </section>`;
@@ -1657,7 +1664,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
           <button class="btn primary small" id="publish">${editId ? 'Save<span class="hide-sm"> changes</span>' : 'Save<span class="hide-sm"> &amp; preview</span>'} →</button>`)}
         <section class="create-head">
           <p class="eyebrow">${editId ? 'Editing quiz' : 'New quiz'}</p>
-          <input class="title-input" id="title" maxlength="120" placeholder="Name your quiz" value="${esc(d.title)}" aria-label="Quiz title">
+          <textarea class="title-input" id="title" rows="1" maxlength="120" placeholder="Name your quiz" aria-label="Quiz title (Enter adds a new line)">${esc(d.title)}</textarea>
           <div id="cover"></div>
           <div class="vis">
             <span class="eyebrow">Who can see it</span>
@@ -1905,7 +1912,9 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       save(); draw();
     };
 
-    $('#title').oninput = (e) => { d.title = e.target.value; save(); };
+    $('#title').oninput = (e) => { d.title = e.target.value; fitTitle(e.target); save(); };
+    fitTitle($('#title'));
+    document.fonts?.ready.then(() => fitTitle($('#title')));
     list.addEventListener('input', (e) => {
       const f = e.target.dataset.f;
       if (!f) return;
@@ -2284,7 +2293,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           const ops = d.questions.filter((q) => isOpinion(q.type));
           d.anonMode = ops.every((q) => q.anon) ? 'anon' : 'mixed';
         }
-        if (!d.title.trim() && r.title) { d.title = r.title.slice(0, 120); $('#title').value = d.title; }
+        if (!d.title.trim() && r.title) { d.title = r.title.slice(0, 120); $('#title').value = d.title; fitTitle($('#title')); }
         if (!d.cover && r.cover) { const c = await picOf(r.cover); if (c) { d.cover = c; drawCover(); } }
         save(); draw();
         busy = false;
@@ -2447,7 +2456,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           ${nav(`<a class="btn small" href="/edit/${id}" data-link>Edit</a><button class="btn primary small" id="open">Open<span class="hide-xs"> lobby</span> →</button>`)}
           <section class="create-head">
             <p class="eyebrow">Preview · ${n} question${n === 1 ? '' : 's'}</p>
-            <h1 class="display">${esc(quiz.title)}</h1>
+            <h1 class="display multiline">${titleHtml(quiz.title)}</h1>
             <p class="lede">Check your questions below. When you're happy, open the lobby to let people in.</p>
           </section>
           <section class="card readybox" aria-label="How hosting works">
@@ -2795,15 +2804,14 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
 
     const solo = (inner) => { app.innerHTML = `<main class="page center">${nav()}<div class="solo">${inner}</div></main>`; };
 
-    const pendingLook = randomLook();   // shown (and used) until you design your own
     function joinForm(note) {
       viewKey = 'join';
       solo(`
         <p class="eyebrow">${note || 'Join a game'}</p>
         <h1 class="display">You’re almost <em>in.</em></h1>
         <button class="look-pick" id="lookBtn" type="button" aria-label="Customise your character">
-          <span class="look-pick-art" id="lookArt">${avatar(myLook() || pendingLook, 'face')}</span>
-          <span class="look-pick-cta">${myLook() ? 'Change your character' : 'Make your character'} →</span></button>
+          <span class="look-pick-art" id="lookArt">${avatar(ensureLook(), 'face')}</span>
+          <span class="look-pick-cta">Change your character →</span></button>
         <form class="joinform" id="join">
           <input id="pin" inputmode="numeric" autocomplete="off" maxlength="7" placeholder="Game PIN" value="${esc(urlPin)}" aria-label="Game PIN">
           <input id="name" autocomplete="off" maxlength="16" placeholder="Nickname" aria-label="Nickname" value="${esc(myNick())}">
@@ -2811,7 +2819,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
         </form>`);
       $(urlPin && !myNick() ? '#name' : urlPin ? '#join button' : '#pin').focus();
       $('#lookBtn').onclick = async () => {
-        const look = await editLook(myLook() || pendingLook);
+        const look = await editLook(ensureLook());
         if (!look || !alive || !$('#lookArt')) return;
         $('#lookArt').innerHTML = avatar(look, 'face');
         $('.look-pick-cta').textContent = 'Change your character →';
@@ -2825,7 +2833,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
         if (!name) return toast('Pick a nickname');
         try {
           // Your own character if you made one; otherwise the one shown here.
-          const session = await api('/api/join', { pin, name, look: myLook() || pendingLook });
+          const session = await api('/api/join', { pin, name, look: ensureLook() });
           store.set(sessionKey, session);
           store.set(MY_NICK, name, localStorage);   // your usual nickname next time
           watch(session);
