@@ -4,6 +4,8 @@ A no-login live quiz game. One person builds a quiz, shares a link or PIN, and e
 
 ## Question types
 
+Every question's title can run over several lines (up to 300 characters): Enter adds a line, for bullets or a longer question. Lines starting with `- ` or `* ` show as • bullets, and a title on several lines is shown as a left-aligned block.
+
 - **Quiz:** a title, an optional picture and 2–4 answers. Mark the right one.
 - **True / False:** a title, an optional picture, and two big answers (✓ True, ✕ False). Mark the right one.
 - **Type answer:** a title, an optional picture, the right answer and up to 3 other spellings to accept. Players type their answer (up to 40 characters). Capitals, accents, punctuation and extra spaces don't matter, and one typo is forgiven in answers of 6+ letters without digits. The host's reveal shows what players typed, grouped, with counts.

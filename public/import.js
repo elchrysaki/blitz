@@ -508,7 +508,7 @@
   function toText(j) {
     const out = [`Title: ${j.title}`, ''];
     j.questions.forEach((q, i) => {
-      out.push(`${i + 1}. ${q.title}`);
+      out.push(`${i + 1}. ${q.title.replace(/\s*\n\s*/g, ' / ')}`);   // (quiz.json keeps the line breaks)
       if (q.type === 'quiz') q.answers.forEach((a, k) => out.push(`${'abcd'[k]}) ${k === q.correct ? '*' : ''}${a}`));
       if (q.type === 'tf') out.push(`Answer: ${q.correct ? 'False' : 'True'}`);
       if (q.type === 'type') out.push(`Answer: ${q.accepted.join(' | ')}`);

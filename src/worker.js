@@ -62,7 +62,7 @@ function cleanQuiz(body, quizId = null, old = null) {
   raw.forEach((q, i) => {
     const n = i + 1;
     if (!q || typeof q !== "object" || Array.isArray(q)) throw new UserError("Bad question");
-    const qtitle = text(q.title).trim().slice(0, 200);
+    const qtitle = cleanTitle(q.title);
     if (!qtitle) throw new UserError(`Question ${n} needs a title`);
     const image = cleanImage(q.image, quizId, old, n);
     const time = TIMES.includes(q.time) ? q.time : 20;
@@ -274,6 +274,9 @@ const VOTE_TIME = 30;  // seconds to vote
 const LIKERT = ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"];
 const NPS_ENDS = ["Not likely at all", "Extremely likely"];
 const ANSWER_MAX = { cloud: CLOUD_MAX, open: OPEN_MAX, brain: IDEA_MAX };
+// A question title: line breaks kept (bullets, a longer question), trailing spaces and runs of blank lines tidied.
+const cleanTitle = (v) => text(v).replace(/\r\n?/g, "\n").split("\n").map((l) => l.replace(/\s+$/, "")).join("\n")
+  .replace(/\n{3,}/g, "\n\n").trim().slice(0, 300);
 const oneLine = (v, max) => String(v).replace(/\s+/g, " ").trim().slice(0, max);
 // Words for a cloud: the same word however it's written counts together; the commonest spelling is shown.
 function tallyWords(list, limit = 60) {

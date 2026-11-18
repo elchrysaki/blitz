@@ -2,6 +2,10 @@
   const app = document.getElementById('app');
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // A question title as HTML: line breaks kept, lines starting "- " or "* " shown as bullets.
+  const titleHtml = (t) => esc(t).replace(/^[ \t]*[-*•][ \t]+/gm, '• ');
+  // A title on several lines reads as a left-aligned block (bullets, a longer question).
+  const qt = (t, extra = '') => `<h1 class="qtitle${String(t).includes('\n') ? ' multi' : ''}">${extra}${titleHtml(t)}</h1>`;
   const L = 'ABCD';
   const TIMES = [10, 20, 30, 60, 90, 120];
   const fmt = (n) => Number(n).toLocaleString('en-US');
@@ -1041,7 +1045,7 @@
             <p class="hint">Answers stay hidden until you save your own copy.</p>
             <ol class="imp-list">${q.questionList.map((x, i) => `
               <li><span class="iq-n">${i + 1}</span>
-                <div class="iq-main"><div class="iq-top"><span class="iq-type">${TYPE_SHORT[x.type] || x.type}</span><span class="iq-time">${x.time}s</span></div><strong>${esc(x.title)}</strong></div>
+                <div class="iq-main"><div class="iq-top"><span class="iq-type">${TYPE_SHORT[x.type] || x.type}</span><span class="iq-time">${x.time}s</span></div><strong>${titleHtml(x.title)}</strong></div>
                 ${x.image ? `<img class="iq-pic" src="${x.image}" alt="" loading="lazy">` : ''}</li>`).join('')}</ol>
           </div>
           <footer class="sheet-foot">${q.mine ? `<a class="btn primary" href="/host/${q.id}" data-link>Open your quiz</a>` : `<button class="btn primary" id="pvSave">Save a copy</button>`}</footer>
@@ -1418,6 +1422,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
   // Who's named on opinion answers (quiz questions always show names on the leaderboard).
   const ANON_MODES = [['named', 'Named'], ['anon', 'Anonymous'], ['mixed', 'Mixed']];
   const TYPE_MAX = 40;   // longest typed answer
+  const TITLE_MAX = 300; // a question can run over several lines (bullets, a longer question)
   const MARGIN_LABELS = [['exact', 'Exact'], ['low', '±5%'], ['medium', '±10%'], ['high', '±20%']];  // of the range
   const MARGIN_SHARE = { exact: 0, low: 0.05, medium: 0.1, high: 0.2 };
   const STEPS = [0.01, 0.1, 0.5, 1, 5, 10, 100];
@@ -1692,9 +1697,9 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
           <button class="chip-btn" data-pick="time" aria-haspopup="dialog" aria-expanded="false" aria-label="Time to answer: ${q.time} seconds">
             <span>Time</span><b class="set-val" data-for="time">${q.time}s</b>${UPDOWN}</button>
         </header>
-        <input class="q-input" data-f="title" maxlength="200" placeholder="${{ pin: 'e.g. Tap the ugliest part of this UI', tf: 'e.g. The Moon has its own light', slider: 'e.g. How tall is the Eiffel Tower?', type: 'e.g. What’s the capital of Australia?', puzzle: 'e.g. Put these planets in order from the Sun',
+        <textarea class="q-input" data-f="title" rows="1" maxlength="${TITLE_MAX}" placeholder="${{ pin: 'e.g. Tap the ugliest part of this UI', tf: 'e.g. The Moon has its own light', slider: 'e.g. How tall is the Eiffel Tower?', type: 'e.g. What’s the capital of Australia?', puzzle: 'e.g. Put these planets in order from the Sun',
           poll: 'e.g. Where should we go for lunch?', scale: 'e.g. Today’s session was useful', drop: 'e.g. Where do you sit in the office?',
-          cloud: 'e.g. Describe this week in one word', open: 'e.g. What should we do differently?', brain: 'e.g. Ideas for our next team day' }[q.type] || 'Ask something…'}" value="${esc(q.title)}" aria-label="Question">
+          cloud: 'e.g. Describe this week in one word', open: 'e.g. What should we do differently?', brain: 'e.g. Ideas for our next team day' }[q.type] || 'Ask something…'}" aria-label="Question (Enter adds a new line)">${esc(q.title)}</textarea>
         ${picture}
         ${isOpinion(q.type) ? opinionEdit(q, i) : pin ? `<div class="pinrow"><p class="hint">${!q.image ? 'Add a picture, then drag on it to mark the right area.'
           : regions.length ? `${regions.length} area${regions.length === 1 ? '' : 's'} marked — players get ${regions.length} pin${regions.length === 1 ? '' : 's'} and need one in every area for full points. Drag to add more.`
@@ -1846,10 +1851,13 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       const sq = { min: +q.min, max: +q.max, unit: q.unit };
       return numberLine(sq, { answer: +q.answer, tolerance: MARGIN_SHARE[q.margin] * (sq.max - sq.min) });
     }
+    // Question titles grow with their lines (Enter adds a line: bullets, a longer question).
+    const fitTitle = (el) => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; };
     const draw = () => {
       closePicker(false);
       list.innerHTML = d.questions.map(card).join('');
       list.querySelectorAll('.seg').forEach((seg) => placeThumb(seg));
+      list.querySelectorAll('textarea.q-input').forEach(fitTitle);
       drawAnon();
     };
     $('#anonBox').addEventListener('click', (e) => {
@@ -1898,7 +1906,7 @@ Which is the largest ocean?,Atlantic,Pacific,Indian,Arctic,Pacific,30,
       const f = e.target.dataset.f;
       if (!f) return;
       const q = qOf(e.target);
-      if (f === 'title') q.title = e.target.value;
+      if (f === 'title') { q.title = e.target.value; fitTitle(e.target); }
       else if (f === 'answer') q.answers[+e.target.dataset.k] = e.target.value;
       else if (f === 'accepted') q.accepted[+e.target.dataset.k] = e.target.value;
       else if (f === 'label') q.labels[+e.target.dataset.k] = e.target.value;
@@ -2222,7 +2230,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
               <span class="iq-n">${i + 1}</span>
               <div class="iq-main">
                 <div class="iq-top"><span class="iq-type">${TYPE_LABEL[q.type]}</span><span class="iq-time">${q.time}s</span></div>
-                <strong>${esc(q.title)}</strong>
+                <strong>${titleHtml(q.title)}</strong>
                 <div class="iq-ans">${ansLine(q)}</div>
                 ${q.warnings.map((w) => `<p class="iq-warn">${esc(w)}</p>`).join('')}
               </div>
@@ -2455,7 +2463,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
             <section class="card pcard">
               <header><span class="num">${String(i + 1).padStart(2, '0')}</span><span class="grow"></span>
                 <span class="pill dim">${TYPE_LABEL[q.type] || 'Quiz'}</span>${isOpinion(q.type) && q.anon ? '<span class="pill dim">🔒 Anonymous</span>' : ''}<span class="pill">${q.time}s</span></header>
-              <h2>${esc(q.title)}</h2>
+              <h2>${titleHtml(q.title)}</h2>
               ${isOpinion(q.type) ? previewOpinion(q) : q.type === 'pin'
                 ? `${pinBox(q.image, q.regions.map((r) => regionEl(r)).join(''))}<p class="hint">${q.regions.length > 1
                   ? `Players drop up to ${q.regions.length} pins. A pin in every area scores full points; each area found earns its share.`
@@ -2597,7 +2605,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
             </header>
             <section class="qwrap">
               <div class="qmain">
-                <h1 class="qtitle">${s.phase === 'vote' ? `Vote: ${esc(oq.title)}` : esc(oq.title)}</h1>
+                ${qt(oq.title, s.phase === 'vote' ? 'Vote: ' : '')}
                 ${tag}
                 ${visual}
               </div>
@@ -2696,7 +2704,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
             </header>
             <section class="qwrap">
               <div class="qmain">
-                <h1 class="qtitle">${esc(q.title)}</h1>
+                ${qt(q.title)}
                 ${visual}
               </div>
               ${reveal
@@ -2872,7 +2880,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
               <span class="pill timer"><span data-secs></span>s</span>
             </header>
             <section class="qwrap"><div class="qmain">
-              <h1 class="qtitle">${esc(q.title)}</h1>
+              ${qt(q.title)}
               ${pinBox(q.image, '', 'tap')}
               <p class="hint" id="pinhint"></p>
             </div></section>
@@ -2938,7 +2946,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
               <span class="pill timer"><span data-secs></span>s</span>
             </header>
             <section class="qwrap"><div class="qmain">
-              <h1 class="qtitle">${esc(q.title)}</h1>
+              ${qt(q.title)}
               ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
               <div class="guess">
                 <output class="guess-value" id="gv"></output>
@@ -3016,7 +3024,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           <main class="page stage player ${cls}">
             ${playerHead(q0)}
             <section class="qwrap"><div class="qmain">
-              <h1 class="qtitle">${esc(q0.title)}</h1>${anonChip}
+              ${qt(q0.title)}${anonChip}
               ${q0.image && q0.type !== 'drop' ? `<img class="qimg" src="${q0.image}" alt="" decoding="async">` : ''}${extra}`;
       const sendAnswer = (choice, undo) => send({ pin: session.pin, player: session.player, action: 'answer', choice }, stop)
         .catch((err) => { toast(err.message); undo?.(); });
@@ -3243,7 +3251,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           <main class="page stage player typeq">
             ${playerHead(q)}
             <section class="qwrap"><div class="qmain">
-              <h1 class="qtitle">${esc(q.title)}</h1>
+              ${qt(q.title)}
               ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
               <form class="typebox" id="typeform" autocomplete="off">
                 ${TYPE_ICON}
@@ -3279,7 +3287,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
           <main class="page stage player puzzleq">
             ${playerHead(q)}
             <section class="qwrap"><div class="qmain">
-              <h1 class="qtitle">${esc(q.title)}</h1>
+              ${qt(q.title)}
               ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
               <ol class="order sortable" id="sort" aria-label="Drag the items into the right order"></ol>
               <p class="hint">Drag to reorder, top to bottom. Your order counts when time’s up; lock in now for more points.</p>
@@ -3370,7 +3378,7 @@ Order: Mercury > Venus > Earth ← Puzzle</pre>
               <span class="pill timer"><span data-secs></span>s</span>
             </header>
             <section class="qwrap"><div class="qmain">
-              <h1 class="qtitle">${esc(q.title)}</h1>
+              ${qt(q.title)}
               ${q.image ? `<img class="qimg" src="${q.image}" alt="" decoding="async">` : ''}
             </div></section>
             ${tiles(q.answers, () => ({ button: true }), q.type)}

@@ -272,7 +272,8 @@ input::placeholder { color: rgba(246, 241, 233, .28); }
 .qcard, .pcard { padding: 26px; margin-bottom: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }  /* never wider than the card */
 .qcard header, .pcard header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .num { font-size: 13px; font-weight: 600; letter-spacing: .14em; color: var(--accent); }
-.q-input { width: 100%; background: none; border: 0; outline: 0; font-family: var(--display); font-size: clamp(24px, 3.4vw, 34px); font-weight: 700; letter-spacing: -.02em; }
+.q-input { width: 100%; background: none; border: 0; outline: 0; font-family: var(--display); font-size: clamp(24px, 3.4vw, 34px); font-weight: 700; letter-spacing: -.02em;
+  line-height: 1.2; color: var(--ink); resize: none; overflow: hidden; display: block; padding: 0; }
 .pcard h2 { font-family: var(--display); font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -.02em; line-height: 1.15; overflow-wrap: anywhere; }
 .drop { position: relative; display: grid; place-items: center; min-height: 148px; border: 1.5px dashed var(--edge); border-radius: 20px; background: rgba(6, 66, 92, .55); cursor: pointer; overflow: hidden; transition: border-color .2s, background .2s; }
 .drop.has { border-style: solid; border-color: var(--line); background: var(--bg); }
@@ -1408,3 +1409,8 @@ html.sheet-open { overflow: hidden; }
 .op-result .hbars, .op-result .cloud, .op-result .idea-rank, .op-result .nps-bars, .op-result .nps-ends { width: min(620px, calc(100vw - 40px)); }
 .anon-note.center { text-align: center; }
 .idea-rank, .vote-list, .cards-wall, .hbars, .idea-wall, .others { text-align: left; }
+
+/* question titles keep their line breaks (bullets, longer questions) */
+.qtitle, .pcard h2, .iq-main strong, .q-input { white-space: pre-line; }
+.qtitle { text-wrap: pretty; }
+.qtitle.multi { text-align: left; justify-self: center; width: min(900px, 100%); font-size: clamp(24px, 3.4vw, 44px); line-height: 1.18; text-wrap: pretty; }

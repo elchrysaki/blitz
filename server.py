@@ -58,6 +58,12 @@ def write_json(path, obj):
 
 # ---------- quizzes (one JSON file each) ----------
 
+def clean_title(v):
+    """A question title: line breaks kept (bullets, a longer question), trailing spaces and runs of blank lines tidied."""
+    t = "\n".join(line.rstrip() for line in str(v or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"))
+    return re.sub(r"\n{3,}", "\n\n", t).strip()[:300]
+
+
 def clean_quiz(body, quiz_id=None, old=None):
     title = str(body.get("title") or "").strip()[:120]
     if not title:
@@ -69,7 +75,7 @@ def clean_quiz(body, quiz_id=None, old=None):
     for n, q in enumerate(raw, 1):
         if not isinstance(q, dict):
             raise ValueError("Bad question")
-        qtitle = str(q.get("title") or "").strip()[:200]
+        qtitle = clean_title(q.get("title"))
         if not qtitle:
             raise ValueError(f"Question {n} needs a title")
         image = clean_image(q.get("image"), quiz_id, old, n)
